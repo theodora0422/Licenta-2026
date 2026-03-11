@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>{{page_title}}</title>
+        <link rel="stylesheet" href="/static/css/style.css">
+    </head>
+<body>
+
+<header>
+    <h1>Trace Visualizer</h1>
+    <p>Concurrent Java Code Analysis</p>
+</header>
+
+<main>
+    <section class="editor-section">
+        <h2>Source Code</h2>
+        <textarea id="code-input" placeholder="Paste your Java code here ..."></textarea>
+        <div class="analysis-options">
+            <label>
+                <input type="checkbox" id="deadlock">
+                Deadlock detection
+            </label>
+            <label>
+                <input type="checkbox" id="starvation">
+                Starvation detection
+            </label>
+            <label>
+                <input type="checkbox" id="data-race">
+                Data race detection
+            </label>
+            <label>
+                <input type="checkbox" id="mutual-exclusion">
+                Mutual exclusion detection
+            </label>
+        </div>
+        <button id="analyze-btn">Analyze</button>
+    </section>
+
+    <section class="results-section">
+        <h2>Analysis Results</h2>
+        <div id="results">
+            No analysis executed yet.
+        </div>
+    </section>
+</main>
+<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/api.js"></script>
+</body>
+</html>

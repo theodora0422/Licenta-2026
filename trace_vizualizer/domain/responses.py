@@ -1,0 +1,18 @@
+from pydantic import BaseModel
+from typing import List,Optional
+
+class Finding(BaseModel):
+    type:str
+    message:str
+    location:Optional[str]=None
+
+class ScenarioStep(BaseModel):
+    thread:str
+    action:str
+    resource:Optional[str]=None
+
+class AnalysisResponse(BaseModel):
+    status:str
+    findings:List[Finding]
+    scenario:List[ScenarioStep]
+    explanation:str
