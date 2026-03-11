@@ -15,7 +15,7 @@
 <main>
     <section class="editor-section">
         <h2>Source Code</h2>
-        <textarea id="code-input" placeholder="Paste your Java code here ..."></textarea>
+        <div id="editor-container"></div>
         <div class="analysis-options">
             <label>
                 <input type="checkbox" id="deadlock">
@@ -39,12 +39,22 @@
 
     <section class="results-section">
         <h2>Analysis Results</h2>
-        <div id="results">
+        <div id="results-dashboard">
             No analysis executed yet.
         </div>
+        <div id="explanation-view"></div>
+        <div id="scenario-visualizer"></div>
     </section>
 </main>
-<script src="/static/js/dashboard.js"></script>
-<script src="/static/js/api.js"></script>
+<script src="/static/js/cytoscape.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+
+<script src="/code_input_module/code_input_module.js"></script>
+<script src="/analysis_configuration_module/analysis_configuration_module.js"></script>
+<script src="/request_builder/request_builder.js"></script>
+<script src="/results_dashboard/results_dashboard.js"></script>
+<script src="/explanation_view/explanation_view.js"></script>
+<script src="/scenario_visualizer/scenario_visualizer.js"></script>
+<script src="/api_client/api_client.js"></script>
 </body>
 </html>
