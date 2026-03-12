@@ -1,38 +1,34 @@
-from fastapi import APIRouter
+from fastapi import APIRouter,HTTPException,status
 
+from trace_vizualizer.backend_analysis_service.analysis_orchestrator.analysis_coordinator import AnalysisCoordinator
+from trace_vizualizer.backend_analysis_service.api_layer.request_validation.validator import validate_analysis_request, \
+    RequestValidationException
 from trace_vizualizer.domain.requests import AnalysisRequest
-from trace_vizualizer.domain.responses import AnalysisResponse, ScenarioStep, Finding
+from trace_vizualizer.domain.responses import AnalysisResponse
 
 router=APIRouter()
+coordinator=AnalysisCoordinator()
 
 @router.post("/analyze",response_model=AnalysisResponse)
-async def analyze(request:AnalysisRequest)->AnalysisResponse:
-    findings=[]
-    scenario=[]
-    explanation="No violations were detected"
-
-    if request.check_deadlock:
-        findings.append(
-            Finding(
-                type="deadlock",
-                message="Potential deadlock detected between Thread-1 and Thread-2.",
-                location="Example.java:23",
-            )
+async def analyze(request: AnalysisRequest)->AnalysisResponse:
+    try:
+        validate_analysis_request(request)
+        return coordinator.run_analysis(request)
+    except RequestValidationException as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status":"error",
+                "message":e.message,
+                "details":e.details,
+            }
         )
-        scenario = [
-            ScenarioStep(thread="Thread-1", action="acquire", resource="lockA"),
-            ScenarioStep(thread="Thread-2", action="acquire", resource="lockB"),
-            ScenarioStep(thread="Thread-1", action="wait", resource="lockB"),
-            ScenarioStep(thread="Thread-2", action="wait", resource="lockA"),
-        ]
-        explanation = (
-            "Two threads acquire two locks in opposite order, which may lead to a deadlock."
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status":"error",
+                "message":"Internal server error during analysis",
+                "details":[],
+            }
         )
-
-    status = "violation_found" if findings else "ok"
-    return AnalysisResponse(
-        status=status,
-        findings=findings,
-        scenario=scenario,
-        explanation=explanation,
-    )
