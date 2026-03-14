@@ -1,6 +1,9 @@
 from pydantic import BaseModel
 from typing import List,Optional
 
+from trace_vizualizer.domain.parsing import ParsingResult
+
+
 class Finding(BaseModel):
     type:str
     message:str
@@ -16,3 +19,4 @@ class AnalysisResponse(BaseModel):
     findings:List[Finding]
     scenario:List[ScenarioStep]
     explanation:str
+    parsing:Optional[ParsingResult]=None

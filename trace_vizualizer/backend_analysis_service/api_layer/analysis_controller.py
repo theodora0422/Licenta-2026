@@ -1,3 +1,5 @@
+import traceback
+
 from fastapi import APIRouter,HTTPException,status
 
 from trace_vizualizer.backend_analysis_service.analysis_orchestrator.analysis_coordinator import AnalysisCoordinator
@@ -23,12 +25,15 @@ async def analyze(request: AnalysisRequest)->AnalysisResponse:
                 "details":e.details,
             }
         )
-    except Exception:
+    except Exception as exc:
+        print("=== INTERNAL ANALYSIS ERROR ===")
+        traceback.print_exc()
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
-                "status":"error",
-                "message":"Internal server error during analysis",
-                "details":[],
+                "status": "error",
+                "message": "Internal server error during analysis.",
+                "details": [str(exc)],
             }
         )
