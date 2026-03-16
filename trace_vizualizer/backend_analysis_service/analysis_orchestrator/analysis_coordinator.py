@@ -1,3 +1,6 @@
+from trace_vizualizer.backend_analysis_service.concurrency_extractor.synchronization_extractor import \
+    SynchronizationExtractor
+from trace_vizualizer.backend_analysis_service.concurrency_extractor.thread_extractor import ThreadExtractor
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.ast_diagnostics import ASTDiagnostics
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser import JavaParser
 from trace_vizualizer.domain.parsing import ParsingResult
@@ -9,6 +12,8 @@ class AnalysisCoordinator:
     def __init__(self):
         self.java_parser = JavaParser()
         self.ast_diagnostics = ASTDiagnostics()
+        self.thread_extractor=ThreadExtractor()
+        self.synchronization_extractor=SynchronizationExtractor()
 
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
@@ -48,7 +53,19 @@ class AnalysisCoordinator:
                 explanation=explanation,
                 parsing=parsing_result,
             )
+        threads = self.thread_extractor.extract_threads(tree, request.source_code)
+        synchronization_operations = self.synchronization_extractor.extract_synchronization_operations(
+            tree,
+            request.source_code,
+        )
 
+        print("=== EXTRACTED THREADS ===")
+        for thread in threads:
+            print(thread.model_dump())
+
+        print("=== EXTRACTED SYNCHRONIZATION OPERATIONS ===")
+        for operation in synchronization_operations:
+            print(operation.model_dump())
         if request.check_deadlock:
             status = "violation_found"
             findings = [
