@@ -1,4 +1,5 @@
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.concurrency_ir_builder import ConcurrencyIRBuilder
+from trace_vizualizer.backend_analysis_service.concurrency_extractor.identifier_resolver import IdentifierResolver
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.shared_access_extractor import \
     SharedAccessExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.synchronization_extractor import \
@@ -20,6 +21,7 @@ class AnalysisCoordinator:
         self.synchronization_extractor=SynchronizationExtractor()
         self.shared_access_extractor=SharedAccessExtractor()
         self.concurrency_ir_builder=ConcurrencyIRBuilder()
+        self.identifier_resolver=IdentifierResolver()
 
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
@@ -59,6 +61,7 @@ class AnalysisCoordinator:
                 explanation=explanation,
                 parsing=parsing_result,
             )
+
         threads = self.thread_extractor.extract_threads(tree, request.source_code)
         synchronization_operations = self.synchronization_extractor.extract_synchronization_operations(
             tree,
@@ -75,6 +78,8 @@ class AnalysisCoordinator:
             shared_access_operations=shared_access_operations,
         )
 
+        canonical_concurrency_ir = self.identifier_resolver.resolve(concurrency_ir)
+
         print("=== EXTRACTED THREADS ===")
         for thread in threads:
             print(thread.model_dump())
@@ -89,6 +94,9 @@ class AnalysisCoordinator:
 
         print("=== CONCURRENCY IR ===")
         print(concurrency_ir.model_dump())
+
+        print("=== CANONICAL CONCURRENCY IR ===")
+        print(canonical_concurrency_ir.model_dump())
 
         if request.check_deadlock:
             status = "violation_found"

@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from pydantic import BaseModel
 
@@ -30,3 +30,32 @@ class ConcurrencyIR(BaseModel):
     threads:List[ThreadInfo]
     synchronization_operations: List[SynchronizationOperation]
     shared_access_operations: List[SharedAccessOperation]
+
+class CanonicalThread(BaseModel):
+    canonical_id:str
+    original_identifier:str
+    original_name:Optional[str]=None
+    kind:str
+    source_location:SourceLocation
+
+class CanonicalSynchronizationOperation(BaseModel):
+    kind:str
+    canonical_resource_id:str
+    original_resource:str
+    expression:str
+    source_location:SourceLocation
+
+class CanonicalSharedAccessOperation(BaseModel):
+    kind:str
+    canonical_resource_id:str
+    original_resource:str
+    expression:str
+    source_location:SourceLocation
+
+class CanonicalConcurrencyIR(BaseModel):
+    threads:List[CanonicalThread]
+    synchronization_operations:List[CanonicalSynchronizationOperation]
+    shared_access_operations:List[CanonicalSharedAccessOperation]
+    thread_mapping:Dict[str,str]
+    synchronization_resource_mapping:Dict[str,str]
+    shared_resource_mapping:Dict[str,str]
