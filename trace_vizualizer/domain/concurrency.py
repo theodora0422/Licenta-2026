@@ -20,6 +20,13 @@ class SynchronizationOperation(BaseModel):
     resource:str
     source_location:SourceLocation
 
-class ConcurrencyExtractionResult(BaseModel):
+class SharedAccessOperation(BaseModel):
+    kind:str
+    resource:str
+    expression:str
+    source_location:SourceLocation
+
+class ConcurrencyIR(BaseModel):
     threads:List[ThreadInfo]
-    synchronization_operations:List[SynchronizationOperation]
+    synchronization_operations: List[SynchronizationOperation]
+    shared_access_operations: List[SharedAccessOperation]
