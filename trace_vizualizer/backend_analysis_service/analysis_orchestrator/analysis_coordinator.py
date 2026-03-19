@@ -5,6 +5,9 @@ from trace_vizualizer.backend_analysis_service.concurrency_extractor.shared_acce
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.synchronization_extractor import \
     SynchronizationExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.thread_extractor import ThreadExtractor
+from trace_vizualizer.backend_analysis_service.model_builder.event_builder import EventBuilder
+from trace_vizualizer.backend_analysis_service.model_builder.initial_state_factory import InitialStateFactory
+from trace_vizualizer.backend_analysis_service.model_builder.program_model_assembler import ProgramModelAssembler
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.ast_diagnostics import ASTDiagnostics
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser import JavaParser
 from trace_vizualizer.domain.concurrency import ConcurrencyIR
@@ -22,6 +25,9 @@ class AnalysisCoordinator:
         self.shared_access_extractor=SharedAccessExtractor()
         self.concurrency_ir_builder=ConcurrencyIRBuilder()
         self.identifier_resolver=IdentifierResolver()
+        self.event_builder=EventBuilder()
+        self.initial_state_factory=InitialStateFactory()
+        self.program_model_assembler=ProgramModelAssembler()
 
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
@@ -80,6 +86,13 @@ class AnalysisCoordinator:
 
         canonical_concurrency_ir = self.identifier_resolver.resolve(concurrency_ir)
 
+        thread_event_sequences = self.event_builder.build(canonical_concurrency_ir)
+        initial_state = self.initial_state_factory.build(thread_event_sequences)
+        program_model = self.program_model_assembler.build(
+            thread_event_sequences=thread_event_sequences,
+            initial_state=initial_state,
+        )
+
         print("=== EXTRACTED THREADS ===")
         for thread in threads:
             print(thread.model_dump())
@@ -97,6 +110,16 @@ class AnalysisCoordinator:
 
         print("=== CANONICAL CONCURRENCY IR ===")
         print(canonical_concurrency_ir.model_dump())
+
+        print("=== THREAD EVENT SEQUENCES ===")
+        for sequence in thread_event_sequences:
+            print(sequence.model_dump())
+
+        print("=== INITIAL STATE ===")
+        print(initial_state.model_dump())
+
+        print("=== PROGRAM MODEL ===")
+        print(program_model.model_dump())
 
         if request.check_deadlock:
             status = "violation_found"
