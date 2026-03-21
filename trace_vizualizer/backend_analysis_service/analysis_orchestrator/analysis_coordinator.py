@@ -10,6 +10,7 @@ from trace_vizualizer.backend_analysis_service.model_builder.initial_state_facto
 from trace_vizualizer.backend_analysis_service.model_builder.program_model_assembler import ProgramModelAssembler
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.ast_diagnostics import ASTDiagnostics
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser import JavaParser
+from trace_vizualizer.backend_analysis_service.scenario_generator.state_explorer import StateExplorer
 from trace_vizualizer.domain.concurrency import ConcurrencyIR
 from trace_vizualizer.domain.parsing import ParsingResult
 from trace_vizualizer.domain.requests import AnalysisRequest
@@ -28,6 +29,7 @@ class AnalysisCoordinator:
         self.event_builder=EventBuilder()
         self.initial_state_factory=InitialStateFactory()
         self.program_model_assembler=ProgramModelAssembler()
+        self.state_explorer=StateExplorer()
 
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
@@ -93,6 +95,12 @@ class AnalysisCoordinator:
             initial_state=initial_state,
         )
 
+        scenario_generation_result = self.state_explorer.explore(
+            program_model=program_model,
+            max_depth=request.max_depth,
+        )
+
+
         print("=== EXTRACTED THREADS ===")
         for thread in threads:
             print(thread.model_dump())
@@ -120,6 +128,9 @@ class AnalysisCoordinator:
 
         print("=== PROGRAM MODEL ===")
         print(program_model.model_dump())
+
+        print("=== SCENARIO GENERATION RESULT ===")
+        print(scenario_generation_result.model_dump())
 
         if request.check_deadlock:
             status = "violation_found"
