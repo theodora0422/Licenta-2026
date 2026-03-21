@@ -31,6 +31,7 @@ class IdentifierResolver:
                 canonical_resource_id=sync_resource_mapping[operation.resource],
                 original_resource=operation.resource,
                 source_location=operation.source_location,
+                expression=operation.expression,
             )
             for operation in concurrency_ir.synchronization_operations
         ]

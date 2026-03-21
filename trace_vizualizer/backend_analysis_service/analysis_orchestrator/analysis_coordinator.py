@@ -10,6 +10,7 @@ from trace_vizualizer.backend_analysis_service.model_builder.initial_state_facto
 from trace_vizualizer.backend_analysis_service.model_builder.program_model_assembler import ProgramModelAssembler
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.ast_diagnostics import ASTDiagnostics
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser import JavaParser
+from trace_vizualizer.backend_analysis_service.property_checker.deadlock import DeadlockChecker
 from trace_vizualizer.backend_analysis_service.scenario_generator.state_explorer import StateExplorer
 from trace_vizualizer.domain.concurrency import ConcurrencyIR
 from trace_vizualizer.domain.parsing import ParsingResult
@@ -30,6 +31,89 @@ class AnalysisCoordinator:
         self.initial_state_factory=InitialStateFactory()
         self.program_model_assembler=ProgramModelAssembler()
         self.state_explorer=StateExplorer()
+        self.deadlock_checker=DeadlockChecker()
+
+    def _build_deadlock_location(self, counterexample) -> str | None:
+        if counterexample is None or not counterexample.steps:
+            return None
+
+        lines = sorted({step.source_line for step in counterexample.steps if step.source_line is not None})
+
+        if not lines:
+            return None
+
+        return "lines " + ", ".join(str(line) for line in lines)
+
+    def _build_deadlock_scenario_steps(self, counterexample) -> list[ScenarioStep]:
+        if counterexample is None:
+            return []
+
+        scenario_steps = [
+            ScenarioStep(
+                thread=step.thread_id,
+                action=step.event_kind,
+                resource=step.original_resource,
+            )
+            for step in counterexample.steps
+        ]
+
+        final_state = counterexample.final_state
+
+        waiting_pairs = [
+            (thread_id, waited_lock)
+            for thread_id, waited_lock in final_state.waiting_for.items()
+            if waited_lock is not None
+        ]
+
+        for thread_id, waited_lock in waiting_pairs:
+            scenario_steps.append(
+                ScenarioStep(
+                    thread=thread_id,
+                    action="wait",
+                    resource=waited_lock,
+                )
+            )
+
+        return scenario_steps
+
+    def _build_deadlock_explanation(self, counterexample) -> str:
+        if counterexample is None:
+            return (
+                "A potential deadlock state was found during bounded exploration. "
+                "The execution reached a state with no enabled transitions while "
+                "at least one thread was waiting for a lock."
+            )
+
+        final_state = counterexample.final_state
+
+        waiting_descriptions = []
+        for thread_id, waited_lock in final_state.waiting_for.items():
+            if waited_lock is None:
+                continue
+
+            owner = final_state.lock_owners.get(waited_lock)
+            if owner is not None:
+                waiting_descriptions.append(
+                    f"{thread_id} waits for {waited_lock}, currently held by {owner}"
+                )
+            else:
+                waiting_descriptions.append(
+                    f"{thread_id} waits for {waited_lock}"
+                )
+
+        if waiting_descriptions:
+            waiting_text = "; ".join(waiting_descriptions)
+            return (
+                "A potential deadlock state was found during bounded exploration. "
+                "The execution reached a state with no enabled transitions. "
+                f"In the final state, {waiting_text}."
+            )
+
+        return (
+            "A potential deadlock state was found during bounded exploration. "
+            "The execution reached a state with no enabled transitions while "
+            "threads remained blocked."
+        )
 
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
@@ -100,6 +184,7 @@ class AnalysisCoordinator:
             max_depth=request.max_depth,
         )
 
+        deadlock_verification_result=self.deadlock_checker.check(scenario_generation_result)
 
         print("=== EXTRACTED THREADS ===")
         for thread in threads:
@@ -132,25 +217,31 @@ class AnalysisCoordinator:
         print("=== SCENARIO GENERATION RESULT ===")
         print(scenario_generation_result.model_dump())
 
+        print("=== DEADLOCK VERIFICATION RESULT ===")
+        print(deadlock_verification_result.model_dump())
+
         if request.check_deadlock:
-            status = "violation_found"
-            findings = [
-                Finding(
-                    type="deadlock",
-                    message="Potential deadlock detected between Thread-1 and Thread-2.",
-                    location="Example.java:23"
-                )
-            ]
-            scenario = [
-                ScenarioStep(thread="Thread-1", action="acquire", resource="lockA"),
-                ScenarioStep(thread="Thread-2", action="acquire", resource="lockB"),
-                ScenarioStep(thread="Thread-1", action="wait", resource="lockB"),
-                ScenarioStep(thread="Thread-2", action="wait", resource="lockA"),
-            ]
-            explanation = (
-                "Two threads acquire different locks and then wait for each other, "
-                "which may lead to a circular wait condition."
-            )
+            if deadlock_verification_result.deadlock_detected:
+                status = "violation_found"
+
+                counterexample = deadlock_verification_result.counterexample
+
+                findings = [
+                    Finding(
+                        type="deadlock",
+                        message=deadlock_verification_result.findings[0].message,
+                        location=self._build_deadlock_location(counterexample),
+                    )
+                ]
+
+                scenario = self._build_deadlock_scenario_steps(counterexample)
+                explanation = self._build_deadlock_explanation(counterexample)
+
+            else:
+                status = "ok"
+                findings = []
+                scenario = []
+                explanation = "No deadlock was detected in the explored scenarios."
 
         return AnalysisResponse(
             status=status,
