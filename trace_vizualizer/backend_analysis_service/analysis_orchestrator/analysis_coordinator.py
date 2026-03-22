@@ -12,8 +12,11 @@ from trace_vizualizer.backend_analysis_service.parsing_and_ast.ast_diagnostics i
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser import JavaParser
 from trace_vizualizer.backend_analysis_service.property_checker.data_race import DataRaceChecker
 from trace_vizualizer.backend_analysis_service.property_checker.deadlock import DeadlockChecker
+from trace_vizualizer.backend_analysis_service.property_checker.finding_aggregator import FindingAggregator
 from trace_vizualizer.backend_analysis_service.property_checker.mutual_exclusion import MutualExclusionChecker
 from trace_vizualizer.backend_analysis_service.property_checker.starvation import StarvationChecker
+from trace_vizualizer.backend_analysis_service.property_checker.verification_result_builder import \
+    VerificationResultBuilder
 from trace_vizualizer.backend_analysis_service.scenario_generator.state_explorer import StateExplorer
 from trace_vizualizer.domain.concurrency import ConcurrencyIR
 from trace_vizualizer.domain.parsing import ParsingResult
@@ -38,7 +41,19 @@ class AnalysisCoordinator:
         self.data_race_checker=DataRaceChecker()
         self.mutual_exclusion_checker=MutualExclusionChecker()
         self.starvation_checker=StarvationChecker()
-
+        self.finding_aggregator=FindingAggregator()
+        self.verification_result_builder=VerificationResultBuilder()
+    def _get_checked_properties(self,request:AnalysisRequest):
+        checked_properties=[]
+        if request.check_deadlock:
+            checked_properties.append("deadlock")
+        if request.check_data_race:
+            checked_properties.append("data_race")
+        if request.check_mutual_exclusion:
+            checked_properties.append("mutual_exclusion")
+        if request.check_starvation:
+            checked_properties.append("starvation")
+        return checked_properties
     def _build_deadlock_location(self, counterexample) -> str | None:
         if counterexample is None or not counterexample.steps:
             return None
@@ -268,41 +283,29 @@ class AnalysisCoordinator:
             max_depth=request.max_depth,
         )
 
-        deadlock_verification_result=self.deadlock_checker.check(scenario_generation_result)
+        deadlock_verification_result = self.deadlock_checker.check(scenario_generation_result)
         data_race_verification_result = self.data_race_checker.check(scenario_generation_result)
-        mutual_exclusion_verification_result = self.mutual_exclusion_checker.check(scenario_generation_result)
-        starvation_verification_result=self.starvation_checker.check(scenario_generation_result)
+        mutual_exclusion_verification_result = self.mutual_exclusion_checker.check(
+            scenario_generation_result
+        )
+        starvation_verification_result = self.starvation_checker.check(
+            scenario_generation_result
+        )
 
-        print("=== EXTRACTED THREADS ===")
-        for thread in threads:
-            print(thread.model_dump())
+        checked_properties = self._get_checked_properties(request)
 
-        print("=== EXTRACTED SYNCHRONIZATION OPERATIONS ===")
-        for operation in synchronization_operations:
-            print(operation.model_dump())
+        aggregated_data = self.finding_aggregator.aggregate(
+            deadlock_result=deadlock_verification_result,
+            data_race_result=data_race_verification_result,
+            mutual_exclusion_result=mutual_exclusion_verification_result,
+            starvation_result=starvation_verification_result,
+            checked_properties=checked_properties,
+        )
 
-        print("=== EXTRACTED SHARED ACCESS OPERATIONS ===")
-        for operation in shared_access_operations:
-            print(operation.model_dump())
-
-        print("=== CONCURRENCY IR ===")
-        print(concurrency_ir.model_dump())
-
-        print("=== CANONICAL CONCURRENCY IR ===")
-        print(canonical_concurrency_ir.model_dump())
-
-        print("=== THREAD EVENT SEQUENCES ===")
-        for sequence in thread_event_sequences:
-            print(sequence.model_dump())
-
-        print("=== INITIAL STATE ===")
-        print(initial_state.model_dump())
-
-        print("=== PROGRAM MODEL ===")
-        print(program_model.model_dump())
-
-        print("=== SCENARIO GENERATION RESULT ===")
-        print(scenario_generation_result.model_dump())
+        unified_verification_result = self.verification_result_builder.build(
+            aggregated_data=aggregated_data,
+            checked_properties=checked_properties,
+        )
 
         print("=== DEADLOCK VERIFICATION RESULT ===")
         print(deadlock_verification_result.model_dump())
@@ -313,119 +316,99 @@ class AnalysisCoordinator:
         print("=== MUTUAL EXCLUSION VERIFICATION RESULT ===")
         print(mutual_exclusion_verification_result.model_dump())
 
-        if request.check_deadlock:
-            if deadlock_verification_result.deadlock_detected:
-                status = "violation_found"
+        print("=== STARVATION VERIFICATION RESULT ===")
+        print(starvation_verification_result.model_dump())
 
-                counterexample = deadlock_verification_result.counterexample
+        print("=== UNIFIED VERIFICATION RESULT ===")
+        print(unified_verification_result.model_dump())
 
-                findings = [
-                    Finding(
-                        type="deadlock",
-                        message=deadlock_verification_result.findings[0].message,
-                        location=self._build_deadlock_location(counterexample),
+        status = unified_verification_result.overall_status
+        findings = []
+        scenario = []
+        explanation = "No property violation was detected in the explored scenarios."
+
+        selected_property = unified_verification_result.selected_property
+        counterexample = unified_verification_result.selected_counterexample
+
+        if unified_verification_result.findings:
+            selected_aggregated_finding = next(
+                (
+                    finding
+                    for finding in unified_verification_result.findings
+                    if finding.property_name == selected_property and finding.violated
+                ),
+                None,
+            )
+
+            if selected_aggregated_finding is not None:
+                if selected_property == "deadlock":
+                    findings = [
+                        Finding(
+                            type="deadlock",
+                            message=selected_aggregated_finding.message,
+                            location=self._build_deadlock_location(counterexample),
+                        )
+                    ]
+                    scenario = self._build_deadlock_scenario_steps(counterexample)
+                    explanation = self._build_deadlock_explanation(deadlock_verification_result)
+
+                elif selected_property == "data_race":
+                    findings = [
+                        Finding(
+                            type="data_race",
+                            message=selected_aggregated_finding.message,
+                            location=self._build_data_race_location(counterexample),
+                        )
+                    ]
+                    scenario = [
+                        ScenarioStep(
+                            thread=step.thread_id,
+                            action=step.event_kind,
+                            resource=step.original_resource,
+                        )
+                        for step in counterexample.steps
+                    ] if counterexample is not None else []
+                    explanation = self._build_data_race_explanation(data_race_verification_result)
+
+                elif selected_property == "mutual_exclusion":
+                    findings = [
+                        Finding(
+                            type="mutual_exclusion",
+                            message=selected_aggregated_finding.message,
+                            location=self._build_mutual_exclusion_location(counterexample),
+                        )
+                    ]
+                    scenario = [
+                        ScenarioStep(
+                            thread=step.thread_id,
+                            action=step.event_kind,
+                            resource=step.original_resource,
+                        )
+                        for step in counterexample.steps
+                    ] if counterexample is not None else []
+                    explanation = self._build_mutual_exclusion_explanation(
+                        mutual_exclusion_verification_result
                     )
-                ]
 
-                scenario = self._build_deadlock_scenario_steps(counterexample)
-                explanation = self._build_deadlock_explanation(counterexample)
-
-            else:
-                status = "ok"
-                findings = []
-                scenario = []
-                explanation = "No deadlock was detected in the explored scenarios."
-        if request.check_data_race:
-            if data_race_verification_result.data_race_detected:
-                status = "violation_found"
-
-                counterexample = data_race_verification_result.counterexample
-
-                findings = [
-                    Finding(
-                        type="data_race",
-                        message=data_race_verification_result.findings[0].message,
-                        location=self._build_data_race_location(counterexample),
+                elif selected_property == "starvation":
+                    findings = [
+                        Finding(
+                            type="starvation",
+                            message=selected_aggregated_finding.message,
+                            location=self._build_starvation_location(counterexample),
+                        )
+                    ]
+                    scenario = [
+                        ScenarioStep(
+                            thread=step.thread_id,
+                            action=step.event_kind,
+                            resource=step.original_resource,
+                        )
+                        for step in counterexample.steps
+                    ] if counterexample is not None else []
+                    explanation = self._build_starvation_explanation(
+                        starvation_verification_result
                     )
-                ]
-
-                scenario = [
-                    ScenarioStep(
-                        thread=step.thread_id,
-                        action=step.event_kind,
-                        resource=step.original_resource,
-                    )
-                    for step in counterexample.steps
-                ] if counterexample is not None else []
-
-                explanation = self._build_data_race_explanation(data_race_verification_result)
-            else:
-                status = "ok"
-                findings = []
-                scenario = []
-                explanation = "No data race was detected in the explored scenarios."
-        if request.check_mutual_exclusion:
-            if mutual_exclusion_verification_result.mutual_exclusion_violated:
-                status = "violation_found"
-
-                counterexample = mutual_exclusion_verification_result.counterexample
-
-                findings = [
-                    Finding(
-                        type="mutual_exclusion",
-                        message=mutual_exclusion_verification_result.findings[0].message,
-                        location=self._build_mutual_exclusion_location(counterexample),
-                    )
-                ]
-
-                scenario = [
-                    ScenarioStep(
-                        thread=step.thread_id,
-                        action=step.event_kind,
-                        resource=step.original_resource,
-                    )
-                    for step in counterexample.steps
-                ] if counterexample is not None else []
-
-                explanation = self._build_mutual_exclusion_explanation(
-                    mutual_exclusion_verification_result
-                )
-            else:
-                status = "ok"
-                findings = []
-                scenario = []
-                explanation = "No mutual exclusion violation was detected in the explored scenarios."
-        if request.check_starvation:
-            if starvation_verification_result.starvation_detected:
-                status = "violation_found"
-
-                counterexample = starvation_verification_result.counterexample
-
-                findings = [
-                    Finding(
-                        type="starvation",
-                        message=starvation_verification_result.findings[0].message,
-                        location=self._build_starvation_location(counterexample),
-                    )
-                ]
-
-                scenario = [
-                    ScenarioStep(
-                        thread=step.thread_id,
-                        action=step.event_kind,
-                        resource=step.original_resource,
-                    )
-                    for step in counterexample.steps
-                ] if counterexample is not None else []
-
-                explanation = self._build_starvation_explanation(
-                    starvation_verification_result
-                )
-            else:
-                status = "ok"
-                findings = []
-                scenario = []
-                explanation = "No starvation indicator was detected in the explored scenarios."
         return AnalysisResponse(
             status=status,
             findings=findings,
