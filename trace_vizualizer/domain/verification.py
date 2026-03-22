@@ -13,5 +13,6 @@ class VerificationFinding(BaseModel):
 class VerificationResult(BaseModel):
     deadlock_detected:bool=False
     data_race_detected:bool=False
+    mutual_exclusion_violated:bool=False
     findings:List[VerificationFinding]
     counterexample:Optional[ExecutionScenario]=None
