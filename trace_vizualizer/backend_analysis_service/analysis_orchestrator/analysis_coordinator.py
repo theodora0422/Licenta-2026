@@ -13,6 +13,7 @@ from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser impor
 from trace_vizualizer.backend_analysis_service.property_checker.data_race import DataRaceChecker
 from trace_vizualizer.backend_analysis_service.property_checker.deadlock import DeadlockChecker
 from trace_vizualizer.backend_analysis_service.property_checker.mutual_exclusion import MutualExclusionChecker
+from trace_vizualizer.backend_analysis_service.property_checker.starvation import StarvationChecker
 from trace_vizualizer.backend_analysis_service.scenario_generator.state_explorer import StateExplorer
 from trace_vizualizer.domain.concurrency import ConcurrencyIR
 from trace_vizualizer.domain.parsing import ParsingResult
@@ -36,6 +37,7 @@ class AnalysisCoordinator:
         self.deadlock_checker=DeadlockChecker()
         self.data_race_checker=DataRaceChecker()
         self.mutual_exclusion_checker=MutualExclusionChecker()
+        self.starvation_checker=StarvationChecker()
 
     def _build_deadlock_location(self, counterexample) -> str | None:
         if counterexample is None or not counterexample.steps:
@@ -171,6 +173,32 @@ class AnalysisCoordinator:
             "The accesses were not protected by a common lock."
         )
 
+    def _build_starvation_location(self, counterexample) -> str | None:
+        if counterexample is None or not counterexample.steps:
+            return None
+
+        lines = sorted({step.source_line for step in counterexample.steps if step.source_line is not None})
+        if not lines:
+            return None
+
+        return "lines " + ", ".join(str(line) for line in lines)
+
+    def _build_starvation_explanation(self, verification_result) -> str:
+        if not verification_result.starvation_detected:
+            return "No starvation indicator was detected in the explored scenarios."
+
+        if not verification_result.findings:
+            return (
+                "A potential starvation pattern was detected during bounded exploration. "
+                "At least one thread remained unfinished while others continued to make progress."
+            )
+
+        return (
+            "A potential starvation pattern was detected during bounded exploration. "
+            f"{verification_result.findings[0].message} "
+            "Because the analysis is bounded, this result should be interpreted as an indicator, "
+            "not as a formal proof."
+        )
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
         diagnostics = self.ast_diagnostics.collect_diagnostics(tree, request.source_code)
@@ -243,6 +271,7 @@ class AnalysisCoordinator:
         deadlock_verification_result=self.deadlock_checker.check(scenario_generation_result)
         data_race_verification_result = self.data_race_checker.check(scenario_generation_result)
         mutual_exclusion_verification_result = self.mutual_exclusion_checker.check(scenario_generation_result)
+        starvation_verification_result=self.starvation_checker.check(scenario_generation_result)
 
         print("=== EXTRACTED THREADS ===")
         for thread in threads:
@@ -366,7 +395,37 @@ class AnalysisCoordinator:
                 findings = []
                 scenario = []
                 explanation = "No mutual exclusion violation was detected in the explored scenarios."
+        if request.check_starvation:
+            if starvation_verification_result.starvation_detected:
+                status = "violation_found"
 
+                counterexample = starvation_verification_result.counterexample
+
+                findings = [
+                    Finding(
+                        type="starvation",
+                        message=starvation_verification_result.findings[0].message,
+                        location=self._build_starvation_location(counterexample),
+                    )
+                ]
+
+                scenario = [
+                    ScenarioStep(
+                        thread=step.thread_id,
+                        action=step.event_kind,
+                        resource=step.original_resource,
+                    )
+                    for step in counterexample.steps
+                ] if counterexample is not None else []
+
+                explanation = self._build_starvation_explanation(
+                    starvation_verification_result
+                )
+            else:
+                status = "ok"
+                findings = []
+                scenario = []
+                explanation = "No starvation indicator was detected in the explored scenarios."
         return AnalysisResponse(
             status=status,
             findings=findings,
