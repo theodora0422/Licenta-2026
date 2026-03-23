@@ -5,6 +5,8 @@ from trace_vizualizer.backend_analysis_service.concurrency_extractor.shared_acce
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.synchronization_extractor import \
     SynchronizationExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.thread_extractor import ThreadExtractor
+from trace_vizualizer.backend_analysis_service.explanation_engine.finding_narrator import FindingNarrator
+from trace_vizualizer.backend_analysis_service.explanation_engine.source_linker import SourceLinker
 from trace_vizualizer.backend_analysis_service.model_builder.event_builder import EventBuilder
 from trace_vizualizer.backend_analysis_service.model_builder.initial_state_factory import InitialStateFactory
 from trace_vizualizer.backend_analysis_service.model_builder.program_model_assembler import ProgramModelAssembler
@@ -43,6 +45,8 @@ class AnalysisCoordinator:
         self.starvation_checker=StarvationChecker()
         self.finding_aggregator=FindingAggregator()
         self.verification_result_builder=VerificationResultBuilder()
+        self.finding_narrator=FindingNarrator()
+        self.source_linker=SourceLinker()
     def _get_checked_properties(self,request:AnalysisRequest):
         checked_properties=[]
         if request.check_deadlock:
@@ -307,6 +311,10 @@ class AnalysisCoordinator:
             checked_properties=checked_properties,
         )
 
+        narrated_explanation=self.finding_narrator.narrate(unified_verification_result)
+        linked_explanation=self.source_linker.link(narrated_explanation,unified_verification_result,request.source_code)
+
+
         print("=== DEADLOCK VERIFICATION RESULT ===")
         print(deadlock_verification_result.model_dump())
 
@@ -321,6 +329,9 @@ class AnalysisCoordinator:
 
         print("=== UNIFIED VERIFICATION RESULT ===")
         print(unified_verification_result.model_dump())
+
+        print("=== STRUCTURED EXPLANATION ===")
+        print(linked_explanation.model_dump())
 
         status = unified_verification_result.overall_status
         findings = []
@@ -350,7 +361,7 @@ class AnalysisCoordinator:
                         )
                     ]
                     scenario = self._build_deadlock_scenario_steps(counterexample)
-                    explanation = self._build_deadlock_explanation(deadlock_verification_result)
+                    explanation = self._build_deadlock_explanation(counterexample)
 
                 elif selected_property == "data_race":
                     findings = [
@@ -415,4 +426,5 @@ class AnalysisCoordinator:
             scenario=scenario,
             explanation=explanation,
             parsing=parsing_result,
+            structured_explanation=linked_explanation,
         )

@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List,Optional
 
+from trace_vizualizer.domain.explanation import ExplanationModel
 from trace_vizualizer.domain.parsing import ParsingResult
 
 
@@ -20,3 +21,4 @@ class AnalysisResponse(BaseModel):
     scenario:List[ScenarioStep]
     explanation:str
     parsing:Optional[ParsingResult]=None
+    structured_explanation:Optional[ExplanationModel]=None
