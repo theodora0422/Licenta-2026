@@ -20,6 +20,11 @@ from trace_vizualizer.backend_analysis_service.property_checker.starvation impor
 from trace_vizualizer.backend_analysis_service.property_checker.verification_result_builder import \
     VerificationResultBuilder
 from trace_vizualizer.backend_analysis_service.scenario_generator.state_explorer import StateExplorer
+from trace_vizualizer.backend_analysis_service.visualization_builder.graph_builder import GraphBuilder
+from trace_vizualizer.backend_analysis_service.visualization_builder.highlight_rules import HighlightRules
+from trace_vizualizer.backend_analysis_service.visualization_builder.timeline_builder import TimelineBuilder
+from trace_vizualizer.backend_analysis_service.visualization_builder.visualization_assembler import \
+    VisualizationAssembler
 from trace_vizualizer.domain.concurrency import ConcurrencyIR
 from trace_vizualizer.domain.parsing import ParsingResult
 from trace_vizualizer.domain.requests import AnalysisRequest
@@ -47,6 +52,10 @@ class AnalysisCoordinator:
         self.verification_result_builder=VerificationResultBuilder()
         self.finding_narrator=FindingNarrator()
         self.source_linker=SourceLinker()
+        self.timeline_builder=TimelineBuilder()
+        self.graph_builder=GraphBuilder()
+        self.highlight_rules=HighlightRules()
+        self.visualization_assembler=VisualizationAssembler()
     def _get_checked_properties(self,request:AnalysisRequest):
         checked_properties=[]
         if request.check_deadlock:
@@ -314,6 +323,10 @@ class AnalysisCoordinator:
         narrated_explanation=self.finding_narrator.narrate(unified_verification_result)
         linked_explanation=self.source_linker.link(narrated_explanation,unified_verification_result,request.source_code)
 
+        timeline_model=self.timeline_builder.build(unified_verification_result.selected_counterexample)
+        graph_nodes,graph_edges=self.graph_builder.build(unified_verification_result.selected_counterexample)
+        highlight_markers=self.highlight_rules.build(unified_verification_result,unified_verification_result.selected_counterexample)
+        visualization_model=self.visualization_assembler.build(timeline=timeline_model,graph_nodes=graph_nodes,graph_edges=graph_edges,highlights=highlight_markers)
 
         print("=== DEADLOCK VERIFICATION RESULT ===")
         print(deadlock_verification_result.model_dump())
@@ -332,6 +345,9 @@ class AnalysisCoordinator:
 
         print("=== STRUCTURED EXPLANATION ===")
         print(linked_explanation.model_dump())
+
+        print("=== VISUALIZATION MODEL ===")
+        print(visualization_model.model_dump())
 
         status = unified_verification_result.overall_status
         findings = []
@@ -427,4 +443,5 @@ class AnalysisCoordinator:
             explanation=explanation,
             parsing=parsing_result,
             structured_explanation=linked_explanation,
+            visualization=visualization_model,
         )

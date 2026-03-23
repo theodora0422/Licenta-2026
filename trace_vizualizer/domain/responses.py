@@ -3,6 +3,7 @@ from typing import List,Optional
 
 from trace_vizualizer.domain.explanation import ExplanationModel
 from trace_vizualizer.domain.parsing import ParsingResult
+from trace_vizualizer.domain.visualization import VisualizationModel
 
 
 class Finding(BaseModel):
@@ -22,3 +23,4 @@ class AnalysisResponse(BaseModel):
     explanation:str
     parsing:Optional[ParsingResult]=None
     structured_explanation:Optional[ExplanationModel]=None
+    visualization:Optional[VisualizationModel]=None
