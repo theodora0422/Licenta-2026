@@ -1,4 +1,13 @@
-function buildGraphElementsFromScenario(scenario) {
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function buildLegacyGraphElementsFromScenario(scenario) {
     const elements = [];
     const addedNodes = new Set();
     const addedEdges = new Set();
@@ -12,9 +21,10 @@ function buildGraphElementsFromScenario(scenario) {
 
         elements.push({
             data: {
-                id: id,
-                label: label,
-                nodeType: nodeType
+                id,
+                label,
+                nodeType,
+                highlighted: false
             }
         });
     }
@@ -28,11 +38,12 @@ function buildGraphElementsFromScenario(scenario) {
 
         elements.push({
             data: {
-                id: id,
-                source: source,
-                target: target,
-                label: label,
-                edgeType: edgeType
+                id,
+                source,
+                target,
+                label,
+                edgeType,
+                highlighted: false
             }
         });
     }
@@ -60,7 +71,31 @@ function buildGraphElementsFromScenario(scenario) {
     return elements;
 }
 
-function renderScenarioSteps(scenario) {
+function buildGraphElementsFromVisualization(visualization) {
+    const nodes = (visualization?.graph_nodes ?? []).map(node => ({
+        data: {
+            id: node.id,
+            label: node.label,
+            nodeType: node.node_type,
+            highlighted: !!node.highlighted
+        }
+    }));
+
+    const edges = (visualization?.graph_edges ?? []).map(edge => ({
+        data: {
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            label: edge.label,
+            edgeType: edge.edge_type,
+            highlighted: !!edge.highlighted
+        }
+    }));
+
+    return [...nodes, ...edges];
+}
+
+function renderScenarioStepsFromLegacyScenario(scenario) {
     if (!scenario || scenario.length === 0) {
         return "<p>No scenario steps available.</p>";
     }
@@ -71,9 +106,9 @@ function renderScenarioSteps(scenario) {
             <ol class="scenario-step-list">
                 ${scenario.map(step => `
                     <li>
-                        <strong>Thread:</strong> ${step.thread},
-                        <strong>Action:</strong> ${step.action},
-                        <strong>Resource:</strong> ${step.resource ?? "N/A"}
+                        <strong>Thread:</strong> ${escapeHtml(step.thread)},
+                        <strong>Action:</strong> ${escapeHtml(step.action)},
+                        <strong>Resource:</strong> ${escapeHtml(step.resource ?? "N/A")}
                     </li>
                 `).join("")}
             </ol>
@@ -81,7 +116,42 @@ function renderScenarioSteps(scenario) {
     `;
 }
 
-function drawScenarioGraph(scenario) {
+function renderTimelineFromVisualization(visualization) {
+    const timeline = visualization?.timeline ?? [];
+
+    if (!timeline.length) {
+        return "<p>No timeline items available.</p>";
+    }
+
+    const highlightIds = new Set(
+        (visualization?.highlights ?? [])
+            .filter(marker => marker.target_type === "timeline")
+            .map(marker => marker.target_id)
+    );
+
+    return `
+        <div class="scenario-steps-block">
+            <h4>Scenario Timeline</h4>
+            <ol class="scenario-step-list">
+                ${timeline.map(item => {
+                    const itemId = `timeline-step:${item.step_index}`;
+                    const highlightedClass = highlightIds.has(itemId) ? "timeline-step-highlighted" : "";
+                    return `
+                        <li class="${highlightedClass}">
+                            <strong>Step ${item.step_index}:</strong>
+                            <strong>Thread:</strong> ${escapeHtml(item.thread_id)},
+                            <strong>Action:</strong> ${escapeHtml(item.action)},
+                            <strong>Resource:</strong> ${escapeHtml(item.resource ?? "N/A")}
+                            ${item.line ? `, <strong>Line:</strong> ${item.line}` : ""}
+                        </li>
+                    `;
+                }).join("")}
+            </ol>
+        </div>
+    `;
+}
+
+function drawScenarioGraph(elements) {
     const graphContainer = document.getElementById("scenario-graph");
 
     if (!graphContainer) {
@@ -94,37 +164,42 @@ function drawScenarioGraph(scenario) {
         return;
     }
 
-    const elements = buildGraphElementsFromScenario(scenario);
-
     window.cytoscape({
         container: graphContainer,
-        elements: elements,
+        elements,
         style: [
             {
                 selector: "node",
                 style: {
-                    "label": "data(label)",
+                    label: "data(label)",
                     "text-valign": "center",
                     "text-halign": "center",
                     "font-size": 12,
-                    "width": 54,
-                    "height": 54
+                    width: 54,
+                    height: 54
                 }
             },
             {
                 selector: 'node[nodeType="thread"]',
                 style: {
-                    "shape": "roundrectangle",
+                    shape: "roundrectangle",
                     "background-color": "#2563eb",
-                    "color": "#ffffff"
+                    color: "#ffffff"
                 }
             },
             {
                 selector: 'node[nodeType="resource"]',
                 style: {
-                    "shape": "ellipse",
+                    shape: "ellipse",
                     "background-color": "#7c3aed",
-                    "color": "#ffffff"
+                    color: "#ffffff"
+                }
+            },
+            {
+                selector: "node[highlighted = true]",
+                style: {
+                    "border-width": 4,
+                    "border-color": "#f59e0b"
                 }
             },
             {
@@ -132,13 +207,13 @@ function drawScenarioGraph(scenario) {
                 style: {
                     "curve-style": "bezier",
                     "target-arrow-shape": "triangle",
-                    "label": "data(label)",
+                    label: "data(label)",
                     "font-size": 10,
                     "text-background-opacity": 1,
                     "text-background-color": "#ffffff",
                     "text-background-padding": 2,
                     "text-rotation": "autorotate",
-                    "width": 2,
+                    width: 2,
                     "line-color": "#94a3b8",
                     "target-arrow-color": "#94a3b8"
                 }
@@ -164,6 +239,14 @@ function drawScenarioGraph(scenario) {
                     "line-color": "#ea580c",
                     "target-arrow-color": "#ea580c"
                 }
+            },
+            {
+                selector: "edge[highlighted = true]",
+                style: {
+                    width: 4,
+                    "line-color": "#f59e0b",
+                    "target-arrow-color": "#f59e0b"
+                }
             }
         ],
         layout: {
@@ -183,21 +266,39 @@ function renderScenarioVisualizer(data) {
         return;
     }
 
-    const scenario = data.scenario ?? [];
+    const visualization = data.visualization;
+    const legacyScenario = data.scenario ?? [];
+
+    if (visualization) {
+        const elements = buildGraphElementsFromVisualization(visualization);
+
+        container.innerHTML = `
+            <div class="scenario-visualizer-block">
+                <h3>Scenario Visualization</h3>
+                <div id="scenario-graph"></div>
+                ${renderTimelineFromVisualization(visualization)}
+            </div>
+        `;
+
+        drawScenarioGraph(elements);
+        return;
+    }
+
+    const elements = buildLegacyGraphElementsFromScenario(legacyScenario);
 
     container.innerHTML = `
         <div class="scenario-visualizer-block">
             <h3>Scenario Visualization</h3>
             <div id="scenario-graph"></div>
-            ${renderScenarioSteps(scenario)}
+            ${renderScenarioStepsFromLegacyScenario(legacyScenario)}
         </div>
     `;
 
-    if (!scenario.length) {
+    if (!legacyScenario.length) {
         return;
     }
 
-    drawScenarioGraph(scenario);
+    drawScenarioGraph(elements);
 }
 
 window.ScenarioVisualizer = {
