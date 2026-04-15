@@ -4,6 +4,9 @@ from trace_vizualizer.backend_analysis_service.concurrency_extractor.shared_acce
     SharedAccessExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.synchronization_extractor import \
     SynchronizationExtractor
+from trace_vizualizer.backend_analysis_service.concurrency_extractor.thread_binding_resolver import \
+    ThreadBindingResolver
+from trace_vizualizer.backend_analysis_service.concurrency_extractor.thread_class_extractor import ThreadClassExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.thread_extractor import ThreadExtractor
 from trace_vizualizer.backend_analysis_service.explanation_engine.finding_narrator import FindingNarrator
 from trace_vizualizer.backend_analysis_service.explanation_engine.source_linker import SourceLinker
@@ -56,6 +59,8 @@ class AnalysisCoordinator:
         self.graph_builder=GraphBuilder()
         self.highlight_rules=HighlightRules()
         self.visualization_assembler=VisualizationAssembler()
+        self.thread_class_extractor=ThreadClassExtractor()
+        self.thread_binding_resolver=ThreadBindingResolver()
     def _get_checked_properties(self,request:AnalysisRequest):
         checked_properties=[]
         if request.check_deadlock:
@@ -267,6 +272,8 @@ class AnalysisCoordinator:
             )
 
         threads = self.thread_extractor.extract_threads(tree, request.source_code)
+        thread_classes=self.thread_class_extractor.extract_thread_classes(tree,request.source_code)
+        thread_instances,thread_start_bindings=self.thread_binding_resolver.resolve(tree,request.source_code,thread_classes)
         synchronization_operations = self.synchronization_extractor.extract_synchronization_operations(
             tree,
             request.source_code,
@@ -278,11 +285,20 @@ class AnalysisCoordinator:
 
         concurrency_ir = self.concurrency_ir_builder.build(
             threads=threads,
+            thread_classes=thread_classes,
+            thread_instances=thread_instances,
+            thread_start_bindings=thread_start_bindings,
             synchronization_operations=synchronization_operations,
             shared_access_operations=shared_access_operations,
         )
 
         canonical_concurrency_ir = self.identifier_resolver.resolve(concurrency_ir)
+
+        print("===CANONICAL THREAD BINDINGS===")
+        index=0
+        while index<len(canonical_concurrency_ir.thread_bindings):
+            print(canonical_concurrency_ir.thread_bindings[index].model_dump())
+            index=index+1
 
         thread_event_sequences = self.event_builder.build(canonical_concurrency_ir)
         initial_state = self.initial_state_factory.build(thread_event_sequences)
@@ -348,6 +364,24 @@ class AnalysisCoordinator:
 
         print("=== VISUALIZATION MODEL ===")
         print(visualization_model.model_dump())
+
+        print("=== EXTRACTED THREAD CLASSES ===")
+        index = 0
+        while index < len(thread_classes):
+            print(thread_classes[index].model_dump())
+            index = index + 1
+
+        print("=== EXTRACTED THREAD INSTANCES ===")
+        index = 0
+        while index < len(thread_instances):
+            print(thread_instances[index].model_dump())
+            index = index + 1
+
+        print("=== EXTRACTED THREAD START BINDINGS ===")
+        index = 0
+        while index < len(thread_start_bindings):
+            print(thread_start_bindings[index].model_dump())
+            index = index + 1
 
         status = unified_verification_result.overall_status
         findings = []
