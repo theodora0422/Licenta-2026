@@ -36,6 +36,13 @@ class ThreadStartBinding(BaseModel):
     start_location:SourceLocation
     run_method_location:Optional[SourceLocation]=None
 
+class LoopRegionInfo(BaseModel):
+    loop_id:str
+    loop_kind:str
+    source_location:SourceLocation
+    expression:Optional[str]=None
+
+
 class SynchronizationOperation(BaseModel):
     kind: str
     resource: str
@@ -49,12 +56,28 @@ class SharedAccessOperation(BaseModel):
     expression: str
     source_location: SourceLocation
 
+class ExpandedSynchronizationOperation(BaseModel):
+    kind:str
+    resource:str
+    source_location:SourceLocation
+    expression: Optional[str]=None
+    iteration_index:int=1
+    synthetic_order_offset:int=0
+
+class ExpandedSharedAccessOperation(BaseModel):
+    kind:str
+    resource:str
+    expression:str
+    source_location:SourceLocation
+    iteration_index:int=1
+    synthetic_order_offset:int=0
 
 class ConcurrencyIR(BaseModel):
     threads: List[ThreadInfo]
     thread_classes:List[ThreadClassInfo]
     thread_instances:List[ThreadInstanceInfo]
     thread_start_bindings:List[ThreadStartBinding]
+    loop_regions:List[LoopRegionInfo]
     synchronization_operations: List[SynchronizationOperation]
     shared_access_operations: List[SharedAccessOperation]
 
@@ -87,7 +110,8 @@ class CanonicalSynchronizationOperation(BaseModel):
     original_resource: str
     source_location: SourceLocation
     expression: Optional[str] = None
-
+    iteration_index:int=1
+    synthetic_order_offset:int=0
 
 class CanonicalSharedAccessOperation(BaseModel):
     kind: str
@@ -95,7 +119,8 @@ class CanonicalSharedAccessOperation(BaseModel):
     original_resource: str
     expression: str
     source_location: SourceLocation
-
+    iteration_index:int=1
+    synthetic_order_offset:int=0
 
 class CanonicalConcurrencyIR(BaseModel):
     threads: List[CanonicalThread]
@@ -104,5 +129,6 @@ class CanonicalConcurrencyIR(BaseModel):
     synchronization_operations: List[CanonicalSynchronizationOperation]
     shared_access_operations: List[CanonicalSharedAccessOperation]
     thread_mapping: Dict[str, str]
+    thread_instance_mapping:Dict[str,str]
     synchronization_resource_mapping: Dict[str, str]
     shared_resource_mapping: Dict[str, str]

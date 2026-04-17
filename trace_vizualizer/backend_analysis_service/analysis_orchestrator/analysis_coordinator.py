@@ -1,5 +1,6 @@
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.concurrency_ir_builder import ConcurrencyIRBuilder
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.identifier_resolver import IdentifierResolver
+from trace_vizualizer.backend_analysis_service.concurrency_extractor.loop_extractor import LoopExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.shared_access_extractor import \
     SharedAccessExtractor
 from trace_vizualizer.backend_analysis_service.concurrency_extractor.synchronization_extractor import \
@@ -61,6 +62,8 @@ class AnalysisCoordinator:
         self.visualization_assembler=VisualizationAssembler()
         self.thread_class_extractor=ThreadClassExtractor()
         self.thread_binding_resolver=ThreadBindingResolver()
+        self.loop_extractor=LoopExtractor()
+        self.loop_unroll_factor=3
     def _get_checked_properties(self,request:AnalysisRequest):
         checked_properties=[]
         if request.check_deadlock:
@@ -282,12 +285,14 @@ class AnalysisCoordinator:
             tree,
             request.source_code,
         )
+        loop_regions=self.loop_extractor.extract_loops(tree)
 
         concurrency_ir = self.concurrency_ir_builder.build(
             threads=threads,
             thread_classes=thread_classes,
             thread_instances=thread_instances,
             thread_start_bindings=thread_start_bindings,
+            loop_regions=loop_regions,
             synchronization_operations=synchronization_operations,
             shared_access_operations=shared_access_operations,
         )
@@ -300,12 +305,18 @@ class AnalysisCoordinator:
             print(canonical_concurrency_ir.thread_bindings[index].model_dump())
             index=index+1
 
-        thread_event_sequences = self.event_builder.build(canonical_concurrency_ir)
+        thread_event_sequences = self.event_builder.build(canonical_concurrency_ir,loop_regions,self.loop_unroll_factor)
         initial_state = self.initial_state_factory.build(thread_event_sequences)
         program_model = self.program_model_assembler.build(
             thread_event_sequences=thread_event_sequences,
             initial_state=initial_state,
         )
+
+        print("===EXTRACTED LOOP REGIONS===")
+        index=0
+        while index<len(loop_regions):
+            print(loop_regions[index].model_dump())
+            index=index+1
 
         scenario_generation_result = self.state_explorer.explore(
             program_model=program_model,

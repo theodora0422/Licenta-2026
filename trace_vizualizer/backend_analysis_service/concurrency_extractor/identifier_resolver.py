@@ -10,7 +10,6 @@ from trace_vizualizer.domain.concurrency import (
 
 
 class IdentifierResolver:
-
     def resolve(self, concurrency_ir: ConcurrencyIR) -> CanonicalConcurrencyIR:
         thread_mapping = self._build_thread_mapping(concurrency_ir)
         thread_instance_mapping = self._build_thread_instance_mapping(concurrency_ir)
@@ -75,6 +74,8 @@ class IdentifierResolver:
                     original_resource=operation.resource,
                     source_location=operation.source_location,
                     expression=operation.expression,
+                    iteration_index=1,
+                    synthetic_order_offset=0,
                 )
             )
             index = index + 1
@@ -90,6 +91,8 @@ class IdentifierResolver:
                     original_resource=operation.resource,
                     expression=operation.expression,
                     source_location=operation.source_location,
+                    iteration_index=1,
+                    synthetic_order_offset=0,
                 )
             )
             index = index + 1
