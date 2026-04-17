@@ -33,6 +33,7 @@ from trace_vizualizer.domain.concurrency import ConcurrencyIR
 from trace_vizualizer.domain.parsing import ParsingResult
 from trace_vizualizer.domain.requests import AnalysisRequest
 from trace_vizualizer.domain.responses import AnalysisResponse, Finding, ScenarioStep
+from trace_vizualizer.domain.verification import VerificationResult, VerificationFinding
 
 
 class AnalysisCoordinator:
@@ -235,6 +236,37 @@ class AnalysisCoordinator:
             "Because the analysis is bounded, this result should be interpreted as an indicator, "
             "not as a formal proof."
         )
+    def _run_selected_verifiers(self,scenario_generation_result,checked_properties:list[str]):
+        deadlock_verification_result=None
+        data_race_verification_result=None
+        mutual_exclusion_verification_result=None
+        starvation_verification_result=None
+
+        if "deadlock" in checked_properties:
+            deadlock_verification_result=self.deadlock_checker.check(scenario_generation_result)
+        if "data_race" in checked_properties:
+            data_race_verification_result=self.data_race_checker.check(scenario_generation_result)
+        if "mutual_exclusion" in checked_properties:
+            mutual_exclusion_verification_result=self.mutual_exclusion_checker.check(scenario_generation_result)
+        if "starvation" in checked_properties:
+            starvation_verification_result=self.starvation_checker.check(scenario_generation_result)
+        return deadlock_verification_result,data_race_verification_result,mutual_exclusion_verification_result,starvation_verification_result
+    def _build_not_requested_result(self,property_name:str):
+        return VerificationResult(
+            deadlock_detected=False,
+            data_race_detected=False,
+            mutual_exclusion_violated=False,
+            starvation_detected=False,
+            findings=[
+                VerificationFinding(
+                    property_name=property_name,
+                    violated=False,
+                    message=f"{property_name} check was not requested",
+                    scenario_id=None,
+                )
+            ],
+            counterexample=None,
+        )
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
         tree = self.java_parser.parse(request.source_code)
         diagnostics = self.ast_diagnostics.collect_diagnostics(tree, request.source_code)
@@ -323,16 +355,16 @@ class AnalysisCoordinator:
             max_depth=request.max_depth,
         )
 
-        deadlock_verification_result = self.deadlock_checker.check(scenario_generation_result)
-        data_race_verification_result = self.data_race_checker.check(scenario_generation_result)
-        mutual_exclusion_verification_result = self.mutual_exclusion_checker.check(
-            scenario_generation_result
-        )
-        starvation_verification_result = self.starvation_checker.check(
-            scenario_generation_result
-        )
-
-        checked_properties = self._get_checked_properties(request)
+        checked_properties=self._get_checked_properties(request)
+        deadlock_verification_result,data_race_verification_result,mutual_exclusion_verification_result,starvation_verification_result=self._run_selected_verifiers(scenario_generation_result,checked_properties)
+        if deadlock_verification_result is None:
+            deadlock_verification_result=self._build_not_requested_result("deadlock")
+        if data_race_verification_result is None:
+            data_race_verification_result=self._build_not_requested_result("data_race")
+        if mutual_exclusion_verification_result is None:
+            mutual_exclusion_verification_result=self._build_not_requested_result("mutual_exclusion")
+        if starvation_verification_result is None:
+            starvation_verification_result=self._build_not_requested_result("starvation")
 
         aggregated_data = self.finding_aggregator.aggregate(
             deadlock_result=deadlock_verification_result,
