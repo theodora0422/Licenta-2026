@@ -198,3 +198,13 @@ section h2 {
     margin: 12px 0;
     background: #ffffff;
 }
+.derived-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 12px;
+    font-weight: 600;
+}

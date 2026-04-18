@@ -11,6 +11,7 @@ class TimelineItem(BaseModel):
     resource:Optional[str]=None
     line:Optional[int]=None
     label:str
+    derived:bool=False
 
 class GraphNode(BaseModel):
     id:str

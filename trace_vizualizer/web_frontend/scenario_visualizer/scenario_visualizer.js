@@ -21,9 +21,9 @@ function buildLegacyGraphElementsFromScenario(scenario) {
 
         elements.push({
             data: {
-                id,
-                label,
-                nodeType,
+                id: id,
+                label: label,
+                nodeType: nodeType,
                 highlighted: false
             }
         });
@@ -38,61 +38,79 @@ function buildLegacyGraphElementsFromScenario(scenario) {
 
         elements.push({
             data: {
-                id,
-                source,
-                target,
-                label,
-                edgeType,
+                id: id,
+                source: source,
+                target: target,
+                label: label,
+                edgeType: edgeType,
                 highlighted: false
             }
         });
     }
 
-    scenario.forEach((step, index) => {
-        const threadId = `thread-${step.thread}`;
+    let index = 0;
+    while (index < scenario.length) {
+        const step = scenario[index];
+        const threadId = "thread-" + step.thread;
         addNode(threadId, step.thread, "thread");
 
         if (step.resource) {
-            const resourceId = `resource-${step.resource}`;
+            const resourceId = "resource-" + step.resource;
             addNode(resourceId, step.resource, "resource");
 
             const action = step.action || "generic";
 
             addEdge(
-                `edge-${index}-${threadId}-${resourceId}-${action}`,
+                "edge-" + index + "-" + threadId + "-" + resourceId + "-" + action,
                 threadId,
                 resourceId,
                 action,
                 action
             );
         }
-    });
+
+        index += 1;
+    }
 
     return elements;
 }
 
 function buildGraphElementsFromVisualization(visualization) {
-    const nodes = (visualization?.graph_nodes ?? []).map(node => ({
-        data: {
-            id: node.id,
-            label: node.label,
-            nodeType: node.node_type,
-            highlighted: !!node.highlighted
-        }
-    }));
+    const elements = [];
+    const graphNodes = visualization?.graph_nodes ?? [];
+    const graphEdges = visualization?.graph_edges ?? [];
 
-    const edges = (visualization?.graph_edges ?? []).map(edge => ({
-        data: {
-            id: edge.id,
-            source: edge.source,
-            target: edge.target,
-            label: edge.label,
-            edgeType: edge.edge_type,
-            highlighted: !!edge.highlighted
-        }
-    }));
+    let index = 0;
+    while (index < graphNodes.length) {
+        const node = graphNodes[index];
+        elements.push({
+            data: {
+                id: node.id,
+                label: node.label,
+                nodeType: node.node_type,
+                highlighted: !!node.highlighted
+            }
+        });
+        index += 1;
+    }
 
-    return [...nodes, ...edges];
+    index = 0;
+    while (index < graphEdges.length) {
+        const edge = graphEdges[index];
+        elements.push({
+            data: {
+                id: edge.id,
+                source: edge.source,
+                target: edge.target,
+                label: edge.label,
+                edgeType: edge.edge_type,
+                highlighted: !!edge.highlighted
+            }
+        });
+        index += 1;
+    }
+
+    return elements;
 }
 
 function renderScenarioStepsFromLegacyScenario(scenario) {
@@ -100,17 +118,26 @@ function renderScenarioStepsFromLegacyScenario(scenario) {
         return "<p>No scenario steps available.</p>";
     }
 
+    let itemsHtml = "";
+    let index = 0;
+
+    while (index < scenario.length) {
+        const step = scenario[index];
+        itemsHtml += `
+            <li>
+                <strong>Thread:</strong> ${escapeHtml(step.thread)},
+                <strong>Action:</strong> ${escapeHtml(step.action)},
+                <strong>Resource:</strong> ${escapeHtml(step.resource ?? "N/A")}
+            </li>
+        `;
+        index += 1;
+    }
+
     return `
         <div class="scenario-steps-block">
             <h4>Scenario Steps</h4>
             <ol class="scenario-step-list">
-                ${scenario.map(step => `
-                    <li>
-                        <strong>Thread:</strong> ${escapeHtml(step.thread)},
-                        <strong>Action:</strong> ${escapeHtml(step.action)},
-                        <strong>Resource:</strong> ${escapeHtml(step.resource ?? "N/A")}
-                    </li>
-                `).join("")}
+                ${itemsHtml}
             </ol>
         </div>
     `;
@@ -123,29 +150,46 @@ function renderTimelineFromVisualization(visualization) {
         return "<p>No timeline items available.</p>";
     }
 
-    const highlightIds = new Set(
-        (visualization?.highlights ?? [])
-            .filter(marker => marker.target_type === "timeline")
-            .map(marker => marker.target_id)
-    );
+    const highlightIds = new Set();
+    const markers = visualization?.highlights ?? [];
+
+    let markerIndex = 0;
+    while (markerIndex < markers.length) {
+        const marker = markers[markerIndex];
+        if (marker.target_type === "timeline") {
+            highlightIds.add(marker.target_id);
+        }
+        markerIndex += 1;
+    }
+
+    let itemsHtml = "";
+    let index = 0;
+
+    while (index < timeline.length) {
+        const item = timeline[index];
+        const itemId = "timeline-step:" + item.step_index;
+        const highlightedClass = highlightIds.has(itemId) ? "timeline-step-highlighted" : "";
+        const derivedBadge = item.derived ? `<span class="derived-badge">derived</span>` : "";
+
+        itemsHtml += `
+            <li class="${highlightedClass}">
+                <strong>Step ${item.step_index}:</strong>
+                <strong>Thread:</strong> ${escapeHtml(item.thread_id)},
+                <strong>Action:</strong> ${escapeHtml(item.action)},
+                <strong>Resource:</strong> ${escapeHtml(item.resource ?? "N/A")}
+                ${item.line ? `, <strong>Line:</strong> ${item.line}` : ""}
+                ${derivedBadge}
+            </li>
+        `;
+
+        index += 1;
+    }
 
     return `
         <div class="scenario-steps-block">
             <h4>Scenario Timeline</h4>
             <ol class="scenario-step-list">
-                ${timeline.map(item => {
-                    const itemId = `timeline-step:${item.step_index}`;
-                    const highlightedClass = highlightIds.has(itemId) ? "timeline-step-highlighted" : "";
-                    return `
-                        <li class="${highlightedClass}">
-                            <strong>Step ${item.step_index}:</strong>
-                            <strong>Thread:</strong> ${escapeHtml(item.thread_id)},
-                            <strong>Action:</strong> ${escapeHtml(item.action)},
-                            <strong>Resource:</strong> ${escapeHtml(item.resource ?? "N/A")}
-                            ${item.line ? `, <strong>Line:</strong> ${item.line}` : ""}
-                        </li>
-                    `;
-                }).join("")}
+                ${itemsHtml}
             </ol>
         </div>
     `;
@@ -166,7 +210,7 @@ function drawScenarioGraph(elements) {
 
     window.cytoscape({
         container: graphContainer,
-        elements,
+        elements: elements,
         style: [
             {
                 selector: "node",

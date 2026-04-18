@@ -382,8 +382,8 @@ class AnalysisCoordinator:
         narrated_explanation=self.finding_narrator.narrate(unified_verification_result)
         linked_explanation=self.source_linker.link(narrated_explanation,unified_verification_result,request.source_code)
 
-        timeline_model=self.timeline_builder.build(unified_verification_result.selected_counterexample)
-        graph_nodes,graph_edges=self.graph_builder.build(unified_verification_result.selected_counterexample)
+        timeline_model=self.timeline_builder.build(unified_verification_result.selected_counterexample,unified_verification_result)
+        graph_nodes,graph_edges=self.graph_builder.build(unified_verification_result.selected_counterexample,unified_verification_result)
         highlight_markers=self.highlight_rules.build(unified_verification_result,unified_verification_result.selected_counterexample)
         visualization_model=self.visualization_assembler.build(timeline=timeline_model,graph_nodes=graph_nodes,graph_edges=graph_edges,highlights=highlight_markers)
 
