@@ -18,19 +18,19 @@
         <div id="editor-container"></div>
         <div class="analysis-options">
             <label>
-                <input type="checkbox" id="deadlock">
+                <input type="radio" name="analysis-property" id="check-deadlock" value="deadlock">
                 Deadlock detection
             </label>
             <label>
-                <input type="checkbox" id="starvation">
+                <input type="radio" name="analysis-property" id="check-starvation" value="starvation">
                 Starvation detection
             </label>
             <label>
-                <input type="checkbox" id="data-race">
+                <input type="radio" name="analysis-property" id="check-data-race" value="data_race">
                 Data race detection
             </label>
             <label>
-                <input type="checkbox" id="mutual-exclusion">
+                <input type="radio" name= "analysis-property" id="check-mutual-exclusion" value="mutual_exclusion">
                 Mutual exclusion detection
             </label>
         </div>
