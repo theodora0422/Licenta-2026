@@ -14,6 +14,12 @@ from trace_vizualizer.domain.model import (
 
 
 class EventBuilder:
+    EXECUTABLE_THREAD_KINDS = {
+        "thread_instantiation",
+        "thread_subclass",
+        "runnable_implementation",
+    }
+
     def __init__(self):
         self.loop_expander = LoopExpander()
 
@@ -24,6 +30,7 @@ class EventBuilder:
         loop_unroll_factor: int,
     ) -> list[ThreadEventSequence]:
         has_real_bindings = False
+
         index = 0
         while index < len(canonical_ir.thread_bindings):
             binding = canonical_ir.thread_bindings[index]
@@ -34,9 +41,9 @@ class EventBuilder:
 
         if has_real_bindings:
             return self._build_from_thread_bindings(
-                canonical_ir,
-                source_loop_regions,
-                loop_unroll_factor,
+                canonical_ir=canonical_ir,
+                source_loop_regions=source_loop_regions,
+                loop_unroll_factor=loop_unroll_factor,
             )
 
         return self._build_from_structural_threads(canonical_ir)
@@ -63,36 +70,116 @@ class EventBuilder:
 
             if binding.run_method_location is not None:
                 expanded_sync_operations = self.loop_expander.expand_synchronization_operations(
-                    canonical_ir.synchronization_operations,
-                    source_loop_regions,
-                    binding.run_method_location,
-                    loop_unroll_factor,
+                    operations=canonical_ir.synchronization_operations,
+                    loop_regions=source_loop_regions,
+                    scope_location=binding.run_method_location,
+                    loop_unroll_factor=loop_unroll_factor,
                 )
 
                 expanded_shared_operations = self.loop_expander.expand_shared_access_operations(
-                    canonical_ir.shared_access_operations,
-                    source_loop_regions,
-                    binding.run_method_location,
-                    loop_unroll_factor,
+                    operations=canonical_ir.shared_access_operations,
+                    loop_regions=source_loop_regions,
+                    scope_location=binding.run_method_location,
+                    loop_unroll_factor=loop_unroll_factor,
                 )
 
                 self._append_expanded_sync_events(
-                    pending_by_thread[thread_id],
-                    expanded_sync_operations,
-                    thread_id,
-                    binding.thread_name,
-                    canonical_ir,
+                    pending_events=pending_by_thread[thread_id],
+                    expanded_operations=expanded_sync_operations,
+                    thread_id=thread_id,
+                    thread_name=binding.thread_name,
+                    canonical_ir=canonical_ir,
                 )
 
                 self._append_expanded_shared_events(
-                    pending_by_thread[thread_id],
-                    expanded_shared_operations,
-                    thread_id,
-                    binding.thread_name,
-                    canonical_ir,
+                    pending_events=pending_by_thread[thread_id],
+                    expanded_operations=expanded_shared_operations,
+                    thread_id=thread_id,
+                    thread_name=binding.thread_name,
+                    canonical_ir=canonical_ir,
                 )
 
             binding_index = binding_index + 1
+
+        return self._finalize_sequences(pending_by_thread, thread_name_by_id)
+
+    def _build_from_structural_threads(
+        self,
+        canonical_ir: CanonicalConcurrencyIR,
+    ) -> list[ThreadEventSequence]:
+        executable_threads = []
+
+        index = 0
+        while index < len(canonical_ir.threads):
+            thread = canonical_ir.threads[index]
+
+            if thread.kind in self.EXECUTABLE_THREAD_KINDS:
+                executable_threads.append(thread)
+
+            index = index + 1
+
+        pending_by_thread = {}
+        thread_name_by_id = {}
+
+        index = 0
+        while index < len(executable_threads):
+            thread = executable_threads[index]
+            pending_by_thread[thread.canonical_id] = []
+            thread_name_by_id[thread.canonical_id] = thread.original_name
+            index = index + 1
+
+        if len(executable_threads) == 0:
+            pending_by_thread["thread_main"] = []
+            thread_name_by_id["thread_main"] = "main"
+            return self._finalize_sequences(pending_by_thread, thread_name_by_id)
+
+        index = 0
+        while index < len(canonical_ir.synchronization_operations):
+            operation = canonical_ir.synchronization_operations[index]
+
+            owner_thread_id = self._resolve_owner_thread_id_for_location(
+                operation_location=operation.source_location,
+                executable_threads=executable_threads,
+                fallback_thread_id="thread_main",
+            )
+
+            if owner_thread_id not in pending_by_thread:
+                pending_by_thread[owner_thread_id] = []
+
+            generated_events = self._build_pending_events_from_canonical_sync_operation(
+                operation=operation,
+                thread_id=owner_thread_id,
+                thread_name=thread_name_by_id.get(owner_thread_id),
+            )
+
+            inner_index = 0
+            while inner_index < len(generated_events):
+                pending_by_thread[owner_thread_id].append(generated_events[inner_index])
+                inner_index = inner_index + 1
+
+            index = index + 1
+
+        index = 0
+        while index < len(canonical_ir.shared_access_operations):
+            operation = canonical_ir.shared_access_operations[index]
+
+            owner_thread_id = self._resolve_owner_thread_id_for_location(
+                operation_location=operation.source_location,
+                executable_threads=executable_threads,
+                fallback_thread_id="thread_main",
+            )
+
+            if owner_thread_id not in pending_by_thread:
+                pending_by_thread[owner_thread_id] = []
+
+            pending_event = self._build_pending_event_from_canonical_shared_access(
+                operation=operation,
+                thread_id=owner_thread_id,
+                thread_name=thread_name_by_id.get(owner_thread_id),
+            )
+
+            pending_by_thread[owner_thread_id].append(pending_event)
+            index = index + 1
 
         return self._finalize_sequences(pending_by_thread, thread_name_by_id)
 
@@ -106,23 +193,23 @@ class EventBuilder:
     ) -> None:
         index = 0
         while index < len(expanded_operations):
-            expanded = expanded_operations[index]
+            expanded_operation = expanded_operations[index]
 
             canonical_resource_id = self._find_canonical_lock_id(
-                canonical_ir,
-                expanded.resource,
+                canonical_ir=canonical_ir,
+                original_resource=expanded_operation.resource,
             )
 
-            generated = self._build_pending_events_from_expanded_sync_operation(
-                expanded,
-                canonical_resource_id,
-                thread_id,
-                thread_name,
+            generated_events = self._build_pending_events_from_expanded_sync_operation(
+                expanded_operation=expanded_operation,
+                canonical_resource_id=canonical_resource_id,
+                thread_id=thread_id,
+                thread_name=thread_name,
             )
 
             inner_index = 0
-            while inner_index < len(generated):
-                pending_events.append(generated[inner_index])
+            while inner_index < len(generated_events):
+                pending_events.append(generated_events[inner_index])
                 inner_index = inner_index + 1
 
             index = index + 1
@@ -137,21 +224,21 @@ class EventBuilder:
     ) -> None:
         index = 0
         while index < len(expanded_operations):
-            expanded = expanded_operations[index]
+            expanded_operation = expanded_operations[index]
 
             canonical_resource_id = self._find_canonical_shared_id(
-                canonical_ir,
-                expanded.resource,
+                canonical_ir=canonical_ir,
+                original_resource=expanded_operation.resource,
             )
 
             pending_event = self._build_pending_event_from_expanded_shared_access(
-                expanded,
-                canonical_resource_id,
-                thread_id,
-                thread_name,
+                expanded_operation=expanded_operation,
+                canonical_resource_id=canonical_resource_id,
+                thread_id=thread_id,
+                thread_name=thread_name,
             )
-            pending_events.append(pending_event)
 
+            pending_events.append(pending_event)
             index = index + 1
 
     def _build_pending_events_from_expanded_sync_operation(
@@ -174,7 +261,8 @@ class EventBuilder:
                     source_location=expanded_operation.source_location,
                     expression=expanded_operation.expression,
                     order_line=expanded_operation.source_location.start_line,
-                    order_column=expanded_operation.source_location.start_column + expanded_operation.synthetic_order_offset,
+                    order_column=expanded_operation.source_location.start_column
+                    + expanded_operation.synthetic_order_offset,
                     phase_priority=0,
                 )
             )
@@ -191,7 +279,8 @@ class EventBuilder:
                     source_location=expanded_operation.source_location,
                     expression=expanded_operation.expression,
                     order_line=expanded_operation.source_location.start_line,
-                    order_column=expanded_operation.source_location.start_column + expanded_operation.synthetic_order_offset,
+                    order_column=expanded_operation.source_location.start_column
+                    + expanded_operation.synthetic_order_offset,
                     phase_priority=2,
                 )
             )
@@ -208,7 +297,8 @@ class EventBuilder:
                     source_location=expanded_operation.source_location,
                     expression=expanded_operation.expression,
                     order_line=expanded_operation.source_location.start_line,
-                    order_column=expanded_operation.source_location.start_column + expanded_operation.synthetic_order_offset,
+                    order_column=expanded_operation.source_location.start_column
+                    + expanded_operation.synthetic_order_offset,
                     phase_priority=0,
                 )
             )
@@ -223,7 +313,8 @@ class EventBuilder:
                     source_location=expanded_operation.source_location,
                     expression=expanded_operation.expression,
                     order_line=expanded_operation.source_location.end_line,
-                    order_column=expanded_operation.source_location.end_column + expanded_operation.synthetic_order_offset,
+                    order_column=expanded_operation.source_location.end_column
+                    + expanded_operation.synthetic_order_offset,
                     phase_priority=2,
                 )
             )
@@ -238,6 +329,7 @@ class EventBuilder:
         thread_name: str | None,
     ) -> PendingEvent:
         event_kind = "write"
+
         if expanded_operation.kind == "read":
             event_kind = "read"
 
@@ -250,7 +342,112 @@ class EventBuilder:
             source_location=expanded_operation.source_location,
             expression=expanded_operation.expression,
             order_line=expanded_operation.source_location.start_line,
-            order_column=expanded_operation.source_location.start_column + expanded_operation.synthetic_order_offset,
+            order_column=expanded_operation.source_location.start_column
+            + expanded_operation.synthetic_order_offset,
+            phase_priority=1,
+        )
+
+    def _build_pending_events_from_canonical_sync_operation(
+        self,
+        operation: CanonicalSynchronizationOperation,
+        thread_id: str,
+        thread_name: str | None,
+    ) -> list[PendingEvent]:
+        results = []
+
+        if operation.kind == "lock_acquire":
+            results.append(
+                PendingEvent(
+                    thread_id=thread_id,
+                    thread_name=thread_name,
+                    kind="acquire",
+                    resource_id=operation.canonical_resource_id,
+                    original_resource=operation.original_resource,
+                    source_location=operation.source_location,
+                    expression=operation.expression,
+                    order_line=operation.source_location.start_line,
+                    order_column=operation.source_location.start_column
+                    + operation.synthetic_order_offset,
+                    phase_priority=0,
+                )
+            )
+            return results
+
+        if operation.kind == "lock_release":
+            results.append(
+                PendingEvent(
+                    thread_id=thread_id,
+                    thread_name=thread_name,
+                    kind="release",
+                    resource_id=operation.canonical_resource_id,
+                    original_resource=operation.original_resource,
+                    source_location=operation.source_location,
+                    expression=operation.expression,
+                    order_line=operation.source_location.start_line,
+                    order_column=operation.source_location.start_column
+                    + operation.synthetic_order_offset,
+                    phase_priority=2,
+                )
+            )
+            return results
+
+        if operation.kind == "synchronized_block":
+            results.append(
+                PendingEvent(
+                    thread_id=thread_id,
+                    thread_name=thread_name,
+                    kind="acquire",
+                    resource_id=operation.canonical_resource_id,
+                    original_resource=operation.original_resource,
+                    source_location=operation.source_location,
+                    expression=operation.expression,
+                    order_line=operation.source_location.start_line,
+                    order_column=operation.source_location.start_column
+                    + operation.synthetic_order_offset,
+                    phase_priority=0,
+                )
+            )
+
+            results.append(
+                PendingEvent(
+                    thread_id=thread_id,
+                    thread_name=thread_name,
+                    kind="release",
+                    resource_id=operation.canonical_resource_id,
+                    original_resource=operation.original_resource,
+                    source_location=operation.source_location,
+                    expression=operation.expression,
+                    order_line=operation.source_location.end_line,
+                    order_column=operation.source_location.end_column
+                    + operation.synthetic_order_offset,
+                    phase_priority=2,
+                )
+            )
+
+        return results
+
+    def _build_pending_event_from_canonical_shared_access(
+        self,
+        operation: CanonicalSharedAccessOperation,
+        thread_id: str,
+        thread_name: str | None,
+    ) -> PendingEvent:
+        event_kind = "write"
+
+        if operation.kind == "read":
+            event_kind = "read"
+
+        return PendingEvent(
+            thread_id=thread_id,
+            thread_name=thread_name,
+            kind=event_kind,
+            resource_id=operation.canonical_resource_id,
+            original_resource=operation.original_resource,
+            source_location=operation.source_location,
+            expression=operation.expression,
+            order_line=operation.source_location.start_line,
+            order_column=operation.source_location.start_column
+            + operation.synthetic_order_offset,
             phase_priority=1,
         )
 
@@ -262,8 +459,10 @@ class EventBuilder:
         index = 0
         while index < len(canonical_ir.synchronization_operations):
             operation = canonical_ir.synchronization_operations[index]
+
             if operation.original_resource == original_resource:
                 return operation.canonical_resource_id
+
             index = index + 1
 
         return original_resource
@@ -276,23 +475,69 @@ class EventBuilder:
         index = 0
         while index < len(canonical_ir.shared_access_operations):
             operation = canonical_ir.shared_access_operations[index]
+
             if operation.original_resource == original_resource:
                 return operation.canonical_resource_id
+
             index = index + 1
 
         return original_resource
 
-    def _build_from_structural_threads(
+    def _resolve_owner_thread_id_for_location(
         self,
-        canonical_ir: CanonicalConcurrencyIR,
-    ) -> list[ThreadEventSequence]:
-        pending_by_thread = {}
-        thread_name_by_id = {}
+        operation_location: SourceLocation,
+        executable_threads: list[CanonicalThread],
+        fallback_thread_id: str,
+    ) -> str:
+        containing_threads = []
 
-        pending_by_thread["thread_main"] = []
-        thread_name_by_id["thread_main"] = "main"
+        index = 0
+        while index < len(executable_threads):
+            thread = executable_threads[index]
 
-        return self._finalize_sequences(pending_by_thread, thread_name_by_id)
+            if self._contains(thread.source_location, operation_location):
+                containing_threads.append(thread)
+
+            index = index + 1
+
+        if len(containing_threads) == 0:
+            return fallback_thread_id
+
+        containing_threads.sort(key=self._thread_span_size)
+        return containing_threads[0].canonical_id
+
+    def _thread_span_size(self, thread: CanonicalThread) -> int:
+        return self._span_size(thread.source_location)
+
+    def _contains(
+        self,
+        outer: SourceLocation,
+        inner: SourceLocation,
+    ) -> bool:
+        starts_after = False
+        ends_before = False
+
+        if inner.start_line > outer.start_line:
+            starts_after = True
+        elif inner.start_line == outer.start_line:
+            if inner.start_column >= outer.start_column:
+                starts_after = True
+
+        if inner.end_line < outer.end_line:
+            ends_before = True
+        elif inner.end_line == outer.end_line:
+            if inner.end_column <= outer.end_column:
+                ends_before = True
+
+        if starts_after and ends_before:
+            return True
+
+        return False
+
+    def _span_size(self, location: SourceLocation) -> int:
+        line_span = location.end_line - location.start_line
+        column_span = location.end_column - location.start_column
+        return line_span * 10000 + column_span
 
     def _finalize_sequences(
         self,
@@ -317,6 +562,7 @@ class EventBuilder:
                 inner_index = 0
                 while inner_index < len(sorted_pending):
                     pending = sorted_pending[inner_index]
+
                     concrete_events.append(
                         AbstractEvent(
                             event_id="event_" + str(event_counter),
@@ -328,6 +574,7 @@ class EventBuilder:
                             expression=pending.expression,
                         )
                     )
+
                     event_counter = event_counter + 1
                     inner_index = inner_index + 1
 
