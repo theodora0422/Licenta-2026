@@ -1,114 +1,252 @@
-from __future__ import annotations
+import re
 
-from typing import List, Optional
-
-from trace_vizualizer.domain.concurrency import (
-    SourceLocation,
-    SynchronizationOperation,
-)
+from trace_vizualizer.domain.concurrency import SourceLocation, SynchronizationOperation
+from trace_vizualizer.backend_analysis_service.parsing_and_ast.conditional_scope_resolver import ConditionalScopeResolver
 
 
 class SynchronizationExtractor:
+    def __init__(self):
+        self.conditional_scope_resolver = ConditionalScopeResolver()
 
-    def extract_synchronization_operations(self, tree, source_code: str) -> List[SynchronizationOperation]:
-        operations: List[SynchronizationOperation] = []
-        self._walk(tree.root_node, source_code, operations)
-        return operations
+    def extract_synchronization_operations(
+        self,
+        tree,
+        source_code: str,
+        boolean_constants: dict | None = None,
+        method_index: dict | None = None,
+    ) -> list[SynchronizationOperation]:
+        if boolean_constants is None:
+            boolean_constants = {}
 
-    def _walk(self, node, source_code: str, operations: List[SynchronizationOperation]) -> None:
-        if node.type == "synchronized_statement":
-            operation = self._extract_synchronized_statement(node, source_code)
-            if operation is not None:
-                operations.append(operation)
+        if method_index is None:
+            method_index = {}
+
+        results = []
+        visited_methods = []
+
+        self._walk(
+            node=tree.root_node,
+            source_code=source_code,
+            boolean_constants=boolean_constants,
+            method_index=method_index,
+            visited_methods=visited_methods,
+            results=results,
+        )
+
+        return results
+
+    def _walk(
+        self,
+        node,
+        source_code: str,
+        boolean_constants: dict,
+        method_index: dict,
+        visited_methods: list,
+        results: list[SynchronizationOperation],
+    ) -> None:
+        if not self.conditional_scope_resolver.is_node_reachable(
+            node,
+            source_code,
+            boolean_constants,
+        ):
+            return
 
         if node.type == "method_invocation":
-            method_operations = self._extract_lock_method_invocation(node, source_code)
-            operations.extend(method_operations)
+            handled = self._handle_method_invocation(
+                node=node,
+                source_code=source_code,
+                method_index=method_index,
+                visited_methods=visited_methods,
+                results=results,
+            )
 
-        for child in node.children:
-            self._walk(child, source_code, operations)
+            if handled:
+                return
 
-    def _extract_synchronized_statement(self, node, source_code: str) -> Optional[SynchronizationOperation]:
-        resource = self._extract_synchronized_resource(node, source_code)
-        if resource is None:
-            resource = "<unknown_monitor>"
+        if node.type == "synchronized_statement":
+            operation = self._extract_synchronized_block(
+                node=node,
+                source_code=source_code,
+                location_override=None,
+            )
+            if operation is not None:
+                results.append(operation)
+
+        index = 0
+        while index < len(node.children):
+            self._walk(
+                node=node.children[index],
+                source_code=source_code,
+                boolean_constants=boolean_constants,
+                method_index=method_index,
+                visited_methods=visited_methods,
+                results=results,
+            )
+            index = index + 1
+
+    def _handle_method_invocation(
+        self,
+        node,
+        source_code: str,
+        method_index: dict,
+        visited_methods: list,
+        results: list[SynchronizationOperation],
+    ) -> bool:
+        invocation_text = self._text(node, source_code).strip()
+
+        if invocation_text.endswith(".lock()"):
+            resource = invocation_text.replace(".lock()", "").strip()
+            results.append(
+                SynchronizationOperation(
+                    kind="lock_acquire",
+                    resource=resource,
+                    source_location=self._build_source_location(node),
+                    expression=invocation_text,
+                )
+            )
+            return True
+
+        if invocation_text.endswith(".unlock()"):
+            resource = invocation_text.replace(".unlock()", "").strip()
+            results.append(
+                SynchronizationOperation(
+                    kind="lock_release",
+                    resource=resource,
+                    source_location=self._build_source_location(node),
+                    expression=invocation_text,
+                )
+            )
+            return True
+
+        method_name = self._extract_simple_method_name(invocation_text)
+
+        if method_name is None:
+            return False
+
+        if method_name not in method_index:
+            return False
+
+        if method_name in visited_methods:
+            return True
+
+        call_site_location = self._build_source_location(node)
+
+        visited_methods.append(method_name)
+        method_info = method_index[method_name]
+        method_body_text = self._text(method_info.body_node, source_code)
+
+        self._extract_operations_from_method_body_text(
+            method_body_text=method_body_text,
+            call_site_location=call_site_location,
+            results=results,
+        )
+
+        visited_methods.pop()
+        return True
+
+    def _extract_operations_from_method_body_text(
+        self,
+        method_body_text: str,
+        call_site_location: SourceLocation,
+        results: list[SynchronizationOperation],
+    ) -> None:
+        synchronized_matches = re.finditer(
+            r"synchronized\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+            method_body_text,
+        )
+
+        for match in synchronized_matches:
+            resource = match.group(1)
+            results.append(
+                SynchronizationOperation(
+                    kind="synchronized_block",
+                    resource=resource,
+                    source_location=call_site_location,
+                    expression=None,
+                )
+            )
+
+        lock_matches = re.finditer(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.lock\s*\(\s*\)",
+            method_body_text,
+        )
+
+        for match in lock_matches:
+            resource = match.group(1)
+            results.append(
+                SynchronizationOperation(
+                    kind="lock_acquire",
+                    resource=resource,
+                    source_location=call_site_location,
+                    expression=resource + ".lock()",
+                )
+            )
+
+        unlock_matches = re.finditer(
+            r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.unlock\s*\(\s*\)",
+            method_body_text,
+        )
+
+        for match in unlock_matches:
+            resource = match.group(1)
+            results.append(
+                SynchronizationOperation(
+                    kind="lock_release",
+                    resource=resource,
+                    source_location=call_site_location,
+                    expression=resource + ".unlock()",
+                )
+            )
+
+    def _extract_synchronized_block(
+        self,
+        node,
+        source_code: str,
+        location_override: SourceLocation | None,
+    ) -> SynchronizationOperation | None:
+        text = self._text(node, source_code)
+
+        start = text.find("(")
+        end = text.find(")")
+
+        if start == -1:
+            return None
+
+        if end == -1:
+            return None
+
+        resource = text[start + 1:end].strip()
+
+        effective_location = self._build_source_location(node)
+        if location_override is not None:
+            effective_location = location_override
 
         return SynchronizationOperation(
             kind="synchronized_block",
             resource=resource,
-            source_location=self._build_source_location(node),
+            source_location=effective_location,
+            expression=None,
         )
 
-    def _extract_synchronized_resource(self, node, source_code: str) -> Optional[str]:
-        for child in node.children:
-            if child.type == "parenthesized_expression":
-                return self._strip_parentheses(self._node_text(child, source_code))
-        return None
+    def _extract_simple_method_name(self, invocation_text: str) -> str | None:
+        if "(" not in invocation_text:
+            return None
 
-    def _extract_lock_method_invocation(self, node, source_code: str) -> List[SynchronizationOperation]:
-        invocation_text = self._node_text(node, source_code).strip()
+        if ")" not in invocation_text:
+            return None
 
-        if invocation_text.endswith(".lock()"):
-            receiver = invocation_text[:-len(".lock()")].strip()
-            if not receiver:
-                receiver = "<unknown_lock>"
+        if "." in invocation_text:
+            return None
 
-            return [
-                SynchronizationOperation(
-                    kind="lock_acquire",
-                    resource=receiver,
-                    source_location=self._build_source_location(node),
-                )
-            ]
+        name = invocation_text.split("(")[0].strip()
 
-        if invocation_text.endswith(".unlock()"):
-            receiver = invocation_text[:-len(".unlock()")].strip()
-            if not receiver:
-                receiver = "<unknown_lock>"
+        if name == "":
+            return None
 
-            return [
-                SynchronizationOperation(
-                    kind="lock_release",
-                    resource=receiver,
-                    source_location=self._build_source_location(node),
-                )
-            ]
+        return name
 
-        return []
-
-    def _extract_invocation_receiver(self, node, source_code: str) -> Optional[str]:
-        object_node = None
-        name_node = None
-
-        for child in node.children:
-            if child.type == "identifier" and name_node is None:
-                name_node = child
-            elif child.type in {"field_access", "identifier"} and object_node is None:
-                object_node = child
-
-        if object_node is not None:
-            return self._node_text(object_node, source_code)
-
-        full_text = self._node_text(node, source_code)
-        if "." in full_text:
-            return full_text.split(".", 1)[0].strip()
-
-        return None
-
-    def _find_child_text_by_type(self, node, source_code: str, target_type: str) -> Optional[str]:
-        for child in node.children:
-            if child.type == target_type:
-                return self._node_text(child, source_code)
-        return None
-
-    def _node_text(self, node, source_code: str) -> str:
+    def _text(self, node, source_code: str) -> str:
         return source_code[node.start_byte:node.end_byte]
-
-    def _strip_parentheses(self, text: str) -> str:
-        text = text.strip()
-        if text.startswith("(") and text.endswith(")"):
-            return text[1:-1].strip()
-        return text
 
     def _build_source_location(self, node) -> SourceLocation:
         return SourceLocation(

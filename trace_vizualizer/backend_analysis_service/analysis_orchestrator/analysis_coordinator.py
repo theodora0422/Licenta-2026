@@ -15,7 +15,9 @@ from trace_vizualizer.backend_analysis_service.model_builder.event_builder impor
 from trace_vizualizer.backend_analysis_service.model_builder.initial_state_factory import InitialStateFactory
 from trace_vizualizer.backend_analysis_service.model_builder.program_model_assembler import ProgramModelAssembler
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.ast_diagnostics import ASTDiagnostics
+from trace_vizualizer.backend_analysis_service.parsing_and_ast.boolean_constant_resolver import BooleanConstantResolver
 from trace_vizualizer.backend_analysis_service.parsing_and_ast.java_parser import JavaParser
+from trace_vizualizer.backend_analysis_service.parsing_and_ast.method_index import MethodIndex
 from trace_vizualizer.backend_analysis_service.property_checker.data_race import DataRaceChecker
 from trace_vizualizer.backend_analysis_service.property_checker.deadlock import DeadlockChecker
 from trace_vizualizer.backend_analysis_service.property_checker.finding_aggregator import FindingAggregator
@@ -65,6 +67,8 @@ class AnalysisCoordinator:
         self.thread_binding_resolver=ThreadBindingResolver()
         self.loop_extractor=LoopExtractor()
         self.loop_unroll_factor=3
+        self.boolean_constant_resolver=BooleanConstantResolver()
+        self.method_index=MethodIndex()
     def _get_checked_properties(self,request:AnalysisRequest):
         checked_properties=[]
         if request.check_deadlock:
@@ -306,16 +310,32 @@ class AnalysisCoordinator:
                 parsing=parsing_result,
             )
 
+        boolean_constants=self.boolean_constant_resolver.resolve(tree,request.source_code)
+        method_index=self.method_index.build(tree,request.source_code)
+
+        print("=== BOOLEAN CONSTANTS ===")
+        print(boolean_constants)
+        print("=== METHOD INDEX ===")
+        method_names=list(method_index.keys())
+        method_names.sort()
+        index=0
+        while index<len(method_names):
+            print(method_names[index])
+            index+=1
+
         threads = self.thread_extractor.extract_threads(tree, request.source_code)
         thread_classes=self.thread_class_extractor.extract_thread_classes(tree,request.source_code)
         thread_instances,thread_start_bindings=self.thread_binding_resolver.resolve(tree,request.source_code,thread_classes)
         synchronization_operations = self.synchronization_extractor.extract_synchronization_operations(
             tree,
             request.source_code,
+            boolean_constants, method_index
         )
         shared_access_operations = self.shared_access_extractor.extract_shared_access_operations(
             tree,
             request.source_code,
+            boolean_constants,
+            method_index
         )
         loop_regions=self.loop_extractor.extract_loops(tree)
 
@@ -343,6 +363,7 @@ class AnalysisCoordinator:
             thread_event_sequences=thread_event_sequences,
             initial_state=initial_state,
         )
+
 
         print("===EXTRACTED LOOP REGIONS===")
         index=0
