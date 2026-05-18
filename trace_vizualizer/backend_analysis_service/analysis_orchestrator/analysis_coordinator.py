@@ -37,6 +37,7 @@ from trace_vizualizer.domain.requests import AnalysisRequest
 from trace_vizualizer.domain.responses import AnalysisResponse, Finding, ScenarioStep
 from trace_vizualizer.domain.verification import VerificationResult, VerificationFinding
 
+import time
 
 class AnalysisCoordinator:
     def __init__(self):
@@ -272,6 +273,7 @@ class AnalysisCoordinator:
             counterexample=None,
         )
     def run_analysis(self, request: AnalysisRequest) -> AnalysisResponse:
+        analysis_start_time = time.perf_counter()
         tree = self.java_parser.parse(request.source_code)
         diagnostics = self.ast_diagnostics.collect_diagnostics(tree, request.source_code)
 
@@ -375,6 +377,16 @@ class AnalysisCoordinator:
             program_model=program_model,
             max_depth=request.max_depth,
         )
+
+        analysis_time_seconds = time.perf_counter() - analysis_start_time
+        print("=== ANALYSIS METRICS ===")
+        print(f"Analysis time: {analysis_time_seconds:.4f} seconds")
+        print("=== EXPLORATION METRICS ===")
+        print(f"Visited states: {scenario_generation_result.metrics.visited_state_count}")
+        print(f"Transitions: {scenario_generation_result.metrics.transition_count}")
+        print(f"Generated scenarios: {scenario_generation_result.metrics.generated_scenario_count}")
+        print(f"Pruned states: {scenario_generation_result.metrics.pruned_state_count}")
+        print(f"Max depth reached: {scenario_generation_result.metrics.max_depth_reached}")
 
         checked_properties=self._get_checked_properties(request)
         deadlock_verification_result,data_race_verification_result,mutual_exclusion_verification_result,starvation_verification_result=self._run_selected_verifiers(scenario_generation_result,checked_properties)

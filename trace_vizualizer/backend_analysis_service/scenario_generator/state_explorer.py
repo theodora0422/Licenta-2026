@@ -32,6 +32,7 @@ class StateExplorer:
             transition_count=0,
             generated_scenario_count=0,
             max_depth_reached=0,
+            pruned_state_count=0,
         )
 
         self._dfs(
@@ -66,6 +67,7 @@ class StateExplorer:
     ) -> None:
         state_key = state.state_key()
         if state_key in visited_states:
+            metrics.pruned_state_count+=1
             return
 
         visited_states.add(state_key)

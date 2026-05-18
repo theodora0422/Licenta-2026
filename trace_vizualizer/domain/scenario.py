@@ -44,6 +44,7 @@ class ExplorationMetrics(BaseModel):
     transition_count: int
     generated_scenario_count: int
     max_depth_reached: int
+    pruned_state_count: int
 
 
 class ScenarioGenerationResult(BaseModel):
