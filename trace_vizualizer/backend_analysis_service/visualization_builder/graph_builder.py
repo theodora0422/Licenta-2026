@@ -4,10 +4,6 @@ from trace_vizualizer.domain.visualization import GraphEdge, GraphNode
 
 
 class GraphBuilder:
-    # construiește graful scenariului și completează cu muchii de wait
-    # din starea finală
-
-
     def build(
         self,
         counterexample: ExecutionScenario | None,
@@ -22,44 +18,60 @@ class GraphBuilder:
         seen_nodes = set()
         seen_edges = set()
 
+        canonical_to_original_resource = self._build_resource_label_mapping(
+            counterexample
+        )
+
         step_index = 0
         while step_index < len(counterexample.steps):
             step = counterexample.steps[step_index]
 
-            thread_node_id = "thread:" + step.thread_id
+            thread_node_id = self._thread_node_id(step.thread_id)
+            thread_label = self._format_thread_label(step.thread_id)
+
             self._ensure_node(
-                nodes,
-                seen_nodes,
-                thread_node_id,
-                step.thread_id,
-                "thread",
+                nodes=nodes,
+                seen_nodes=seen_nodes,
+                node_id=thread_node_id,
+                label=thread_label,
+                node_type="thread",
             )
 
-            if step.original_resource is not None:
-                resource_node_id = "resource:" + step.original_resource
-                self._ensure_node(
-                    nodes,
-                    seen_nodes,
-                    resource_node_id,
+            if step.resource_id is not None:
+                resource_label = self._format_resource_label(
+                    step.resource_id,
                     step.original_resource,
-                    "resource",
+                    canonical_to_original_resource,
+                )
+                resource_node_id = self._resource_node_id(step.resource_id)
+
+                self._ensure_node(
+                    nodes=nodes,
+                    seen_nodes=seen_nodes,
+                    node_id=resource_node_id,
+                    label=resource_label,
+                    node_type="resource",
                 )
 
                 edge_id = (
-                    "edge:" + str(step.step_index)
-                    + ":" + thread_node_id
-                    + ":" + resource_node_id
-                    + ":" + step.event_kind
+                    "edge:"
+                    + str(step.step_index)
+                    + ":"
+                    + thread_node_id
+                    + ":"
+                    + resource_node_id
+                    + ":"
+                    + step.event_kind
                 )
 
                 self._ensure_edge(
-                    edges,
-                    seen_edges,
-                    edge_id,
-                    thread_node_id,
-                    resource_node_id,
-                    step.event_kind,
-                    step.event_kind,
+                    edges=edges,
+                    seen_edges=seen_edges,
+                    edge_id=edge_id,
+                    source=thread_node_id,
+                    target=resource_node_id,
+                    label=step.event_kind,
+                    edge_type=step.event_kind,
                 )
 
             step_index = step_index + 1
@@ -73,39 +85,96 @@ class GraphBuilder:
             thread_id, waited_lock = waiting_items[pair_index]
 
             if waited_lock is not None:
-                thread_node_id = "thread:" + thread_id
-                resource_node_id = "resource:" + waited_lock
+                thread_node_id = self._thread_node_id(thread_id)
+                thread_label = self._format_thread_label(thread_id)
 
-                self._ensure_node(
-                    nodes,
-                    seen_nodes,
-                    thread_node_id,
-                    thread_id,
-                    "thread",
-                )
-
-                self._ensure_node(
-                    nodes,
-                    seen_nodes,
-                    resource_node_id,
+                resource_label = self._format_resource_label(
                     waited_lock,
-                    "resource",
+                    None,
+                    canonical_to_original_resource,
+                )
+                resource_node_id = self._resource_node_id(waited_lock)
+
+                self._ensure_node(
+                    nodes=nodes,
+                    seen_nodes=seen_nodes,
+                    node_id=thread_node_id,
+                    label=thread_label,
+                    node_type="thread",
                 )
 
-                wait_edge_id = "wait-edge:" + thread_id + ":" + waited_lock
+                self._ensure_node(
+                    nodes=nodes,
+                    seen_nodes=seen_nodes,
+                    node_id=resource_node_id,
+                    label=resource_label,
+                    node_type="resource",
+                )
+
+                wait_edge_id = (
+                    "wait-edge:"
+                    + thread_id
+                    + ":"
+                    + waited_lock
+                )
+
                 self._ensure_edge(
-                    edges,
-                    seen_edges,
-                    wait_edge_id,
-                    thread_node_id,
-                    resource_node_id,
-                    "wait",
-                    "wait",
+                    edges=edges,
+                    seen_edges=seen_edges,
+                    edge_id=wait_edge_id,
+                    source=thread_node_id,
+                    target=resource_node_id,
+                    label="wait",
+                    edge_type="wait",
                 )
 
             pair_index = pair_index + 1
 
         return nodes, edges
+
+    def _build_resource_label_mapping(
+        self,
+        counterexample: ExecutionScenario,
+    ) -> dict[str, str]:
+        mapping = {}
+
+        index = 0
+        while index < len(counterexample.steps):
+            step = counterexample.steps[index]
+
+            if step.resource_id is not None and step.original_resource is not None:
+                mapping[step.resource_id] = step.original_resource
+
+            index = index + 1
+
+        return mapping
+
+    def _format_resource_label(
+        self,
+        resource_id: str,
+        original_resource: str | None,
+        canonical_to_original_resource: dict[str, str],
+    ) -> str:
+        if resource_id in canonical_to_original_resource:
+            return canonical_to_original_resource[resource_id]
+
+        if original_resource is not None:
+            return original_resource
+
+        return resource_id
+
+    def _thread_node_id(self, thread_id: str) -> str:
+        return "thread:" + thread_id
+
+    def _resource_node_id(self, resource_id: str) -> str:
+        return "resource:" + resource_id
+
+    def _format_thread_label(self, thread_id: str) -> str:
+        if thread_id.startswith("thread_entity_"):
+            suffix = thread_id.replace("thread_entity_", "")
+            return "thread_" + suffix
+
+        return thread_id
 
     def _ensure_node(
         self,

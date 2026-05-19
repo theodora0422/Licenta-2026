@@ -208,3 +208,8 @@ section h2 {
     font-size: 12px;
     font-weight: 600;
 }
+
+.explanation-step-list li {
+    margin-bottom: 8px;
+    line-height: 1.45;
+}

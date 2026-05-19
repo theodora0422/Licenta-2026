@@ -28,9 +28,12 @@ function renderStructuredExplanation(structuredExplanation) {
             <div class="explanation-steps">
                 <h4>Detailed Steps</h4>
                 <ol class="explanation-step-list">
-                    ${detailedSteps.map(step => `
-                        <li>${escapeHtml(step)}</li>
-                    `).join("")}
+                    ${detailedSteps.map(step => {
+                        const formattedStep = escapeHtml(step).replaceAll("; ", ";<br>");
+                        return `
+                            <li>${formattedStep}</li>
+                        `;
+                    }).join("")}
                 </ol>
             </div>
         `

@@ -540,9 +540,9 @@ class EventBuilder:
         return line_span * 10000 + column_span
 
     def _finalize_sequences(
-        self,
-        pending_by_thread: dict,
-        thread_name_by_id: dict,
+            self,
+            pending_by_thread: dict,
+            thread_name_by_id: dict,
     ) -> list[ThreadEventSequence]:
         thread_sequences = []
         event_counter = 1
@@ -550,15 +550,20 @@ class EventBuilder:
         thread_ids = list(pending_by_thread.keys())
         thread_ids.sort()
 
+        compact_thread_mapping = self._build_compact_thread_id_mapping(thread_ids)
+
         index = 0
         while index < len(thread_ids):
-            thread_id = thread_ids[index]
-            pending_events = pending_by_thread[thread_id]
+            original_thread_id = thread_ids[index]
+            compact_thread_id = compact_thread_mapping[original_thread_id]
+
+            pending_events = pending_by_thread[original_thread_id]
 
             if len(pending_events) > 0:
                 sorted_pending = self._sort_pending_events(pending_events)
 
                 concrete_events = []
+
                 inner_index = 0
                 while inner_index < len(sorted_pending):
                     pending = sorted_pending[inner_index]
@@ -566,7 +571,7 @@ class EventBuilder:
                     concrete_events.append(
                         AbstractEvent(
                             event_id="event_" + str(event_counter),
-                            thread_id=pending.thread_id,
+                            thread_id=compact_thread_id,
                             kind=pending.kind,
                             resource_id=pending.resource_id,
                             original_resource=pending.original_resource,
@@ -580,8 +585,8 @@ class EventBuilder:
 
                 thread_sequences.append(
                     ThreadEventSequence(
-                        thread_id=thread_id,
-                        thread_name=thread_name_by_id.get(thread_id),
+                        thread_id=compact_thread_id,
+                        thread_name=thread_name_by_id.get(original_thread_id),
                         events=concrete_events,
                     )
                 )
@@ -598,6 +603,28 @@ class EventBuilder:
             )
 
         return thread_sequences
+
+    def _build_compact_thread_id_mapping(
+            self,
+            thread_ids: list[str],
+    ) -> dict[str, str]:
+        mapping = {}
+
+        compact_index = 1
+        index = 0
+
+        while index < len(thread_ids):
+            original_thread_id = thread_ids[index]
+
+            if original_thread_id == "thread_main":
+                mapping[original_thread_id] = "thread_main"
+            else:
+                mapping[original_thread_id] = "thread_" + str(compact_index)
+                compact_index = compact_index + 1
+
+            index = index + 1
+
+        return mapping
 
     def _sort_pending_events(
         self,
